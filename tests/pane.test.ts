@@ -260,8 +260,14 @@ test('statusText is the band in one line, prefixed SuperMod', async () => {
   for (const part of ['englische-ansicht', '44%', 'Task 5/9', 'Implementer', '38%', 'Agents 1', '~105–225 min']) expect(line).toContain(part)
   // Hidden or not, the status answers.
   expect(statusText({ ...FULL, ui: { ...UI, isHidden: true } }, OPTIONS)).toBe(line)
-  expect(statusText({ ...FULL, run: NO_RUN }, OPTIONS)).toBe('SuperMod: no run detected')
-  expect(statusText({ ...FULL, run: NO_RUN }, { ...OPTIONS, language: 'de' })).toBe('SuperMod: kein Lauf erkannt')
+  const idle = statusText({ ...FULL, run: NO_RUN }, OPTIONS)
+  expect(idle.startsWith('SuperMod: no run detected')).toBe(true)
+  expect(idle).not.toContain('\n')
+  expect(idle).toContain('38%')
+  expect(idle).toContain('Agents')
+  const idleDe = statusText({ ...FULL, run: NO_RUN }, { ...OPTIONS, language: 'de' })
+  expect(idleDe.startsWith('SuperMod: kein Lauf erkannt')).toBe(true)
+  expect(idleDe).toContain('38%')
 })
 
 test('German agent rows keep a space after the status, the header has no hard-coded label', { options: { language: 'de' } }, async ($, on) => {

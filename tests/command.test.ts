@@ -102,7 +102,9 @@ test('/supermod status answers with the band as one line on every surface', asyn
 test('/supermod status without a run says no run detected', { options: { language: 'de' } }, async ($, on) => {
   world(on)
   await $.session.start({ surface: 'vscode', isInteractive: true, cwd: R })
-  expect((await run($, 'status')).text).toBe('SuperMod: kein Lauf erkannt')
+  const text = (await run($, 'status')).text
+  expect(text.startsWith('SuperMod: kein Lauf erkannt')).toBe(true)
+  expect(text).not.toContain('\n')
 })
 
 test('/supermod opens the pane and counts it as open', async ($, on) => {

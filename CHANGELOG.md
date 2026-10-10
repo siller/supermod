@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `/supermod status` names the context percentage and the agent count even when no run is detected.
+
 ## 0.1.0 – 2026-10-10
 
 - One-line band above the prompt: Superpowers progress with the current task and station, context fill with warning and critical colours and one toast per crossing, running agents, remaining-time range; width-aware down to 80 columns.

@@ -44,8 +44,12 @@ type Group = { id: GroupId; sep: string; parts: Segment[] }
 
 /** The band's content, or null when it yields (spec §4.1 visibility). */
 export function bandModel(s: BandState): BandModel | null {
+  return isBandVisible(s, s.ui.options) ? bandModelOf(s) : null
+}
+
+/** The band's content whether the band is visible or not (the status text answers either way). */
+export function bandModelOf(s: BandState): BandModel {
   const o = s.ui.options
-  if (!isBandVisible(s, o)) return null
   const lang = o.language
   const ctxPercent = s.context.ring.at(-1)?.percent ?? null
   const base = { ctxPercent, ctxTone: tone(ctxPercent, o.warnPercent, o.criticalPercent), lang }

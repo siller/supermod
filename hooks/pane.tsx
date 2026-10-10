@@ -5,7 +5,7 @@
 
 import type { ElementTable, RenderElement } from 'claude-code'
 import type { AgentRow, ModelsState, RunSnapshot, UiOptions } from '../types'
-import { bandModel, clip, planBandRow, styleOf } from './band'
+import { bandModelOf, clip, planBandRow, styleOf } from './band'
 import type { BandState, Segment } from './band'
 import { estimateRange, medianMs, taskDurations } from './eta'
 import { bar, dur, hm, k, pct, spark, usd } from './format'
@@ -296,7 +296,10 @@ export function renderPane(els: ElementTable, rows: Segment[][]): RenderElement 
 
 /** The band's content as one line of text, prefixed `SuperMod`, whether the band is hidden or not. */
 export function statusText(s: BandState, o: UiOptions): string {
-  const m = bandModel({ ...s, ui: { ...s.ui, isHidden: false, options: o } })
-  if (m === null || m.percent === null) return `${t(o.language, 'title')}: ${t(o.language, 'noRun')}`
-  return `${t(o.language, 'title')}  ${planBandRow(m, 10_000).segments.map(x => x.text).join('')}`
+  const m = bandModelOf({ ...s, ui: { ...s.ui, isHidden: false, options: o } })
+  const segments = planBandRow(m, 10_000).segments.map(x => x.text)
+  const rowText = segments.join('')
+  // No run: the band row leads with the title and has no agents group; the status names the context and the agent count itself.
+  if (m.percent === null) return `${t(o.language, 'title')}: ${t(o.language, 'noRun')}  ${segments.slice(1).join('').trim()}  ${t(o.language, 'agents')} ${m.agentsRunning}`
+  return `${t(o.language, 'title')}  ${rowText}`
 }
