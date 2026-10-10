@@ -1,6 +1,7 @@
 // In-memory Fs fake for scan tests. Directories are implied by the file paths
 // (or declared with `dir: true`); every call is recorded so tests can assert
-// which paths were never touched.
+// which paths were never touched. `stat` answers like the engine with
+// resolution on: realPath is the path itself unless a node sets another.
 
 import type { Fs } from '../hooks/scan'
 
@@ -54,9 +55,7 @@ export function fakeFs(tree: Record<string, FakeNode>): FakeFs {
     async stat(path) {
       const node = enter('stat', path)
       if (!node) return null
-      return node.realPath === undefined
-        ? { kind: node.kind, mtimeMs: node.mtimeMs }
-        : { kind: node.kind, mtimeMs: node.mtimeMs, realPath: node.realPath }
+      return { kind: node.kind, mtimeMs: node.mtimeMs, realPath: node.realPath ?? path }
     },
   }
 }

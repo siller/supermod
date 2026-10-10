@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { discoverRun, discoverWorktreeRoots, isInsideRoots, searchRoots } from '../hooks/scan'
+import { discoverRun, discoverWorktreeRoots, isInsideRoots, resolveRoots, searchRoots } from '../hooks/scan'
 import { fakeFs } from './fakefs'
 import type { FakeNode } from './fakefs'
 import { LEDGER_MID, LEDGER_OTHER_PLAN, PLAN_NINE } from './fixtures'
@@ -253,11 +253,59 @@ test('a misbehaving Fs never makes discoverRun throw', async () => {
     list: async () => [null, { name: undefined }, { name: '..', kind: 'dir' }, { name: 'w', kind: 'dir', mtimeMs: NOW }] as never,
     stat: (path: string) => {
       if (path.endsWith('plan-path')) throw new Error('sync')
-      return Promise.resolve({ kind: path.endsWith('.md') ? 'file' : 'dir', mtimeMs: NOW } as const)
+      return Promise.resolve({ kind: path.endsWith('.md') ? 'file' : 'dir', mtimeMs: NOW, realPath: path } as const)
     },
   }
   const run = await discoverRun(odd, [R], OPTS)
   expect(run.ledgerPath).toBe(SDD + '/w/progress.md')
   expect(run.ledgerText).toBeNull()
   expect(await discoverWorktreeRoots(odd, R)).toEqual([R + '/.claude/worktrees/w', R + '/.worktrees/w', R + '/worktrees/w'])
+})
+
+test('a stat answer without realPath is refused (fail closed)', async () => {
+  const fake = fakeFs(repoTree())
+  const unresolved = { ...fake, stat: async (path: string) => { const st = await fake.stat(path); return st && { kind: st.kind, mtimeMs: st.mtimeMs } } }
+  const run = await discoverRun(unresolved, [R], { ...OPTS, pinned: PLAN })
+  expect(run.ledgerPath).toBeNull()
+  expect(run.planPath).toBeNull()
+  expect(fake.calls.filter(c => c.op !== 'stat')).toEqual([])
+  expect(await discoverWorktreeRoots(unresolved, R)).toEqual([])
+})
+
+test('a symlink to a file of another shape inside the root is refused', async () => {
+  const env = R + '/.env'
+  for (const [path, field, opts] of [
+    [WS + '/progress.md', 'ledgerPath', OPTS],
+    [PLAN, 'planPath', { ...OPTS, pinned: PLAN }],
+    [SPEC, 'specPath', OPTS],
+  ] as const) {
+    const fake = fakeFs({ ...repoTree(), [path]: { text: 'SECRET=1', mtimeMs: NOW, realPath: env } })
+    const run = await discoverRun(fake, [R], opts)
+    expect(run[field] === path).toBe(false)
+    expect(fake.calls.filter(c => c.op === 'read' && (c.path === path || c.path === env))).toEqual([])
+  }
+})
+
+test('a Spec link relative to the plan file is resolved from the plan folder', async () => {
+  const fake = fakeFs({ ...repoTree(), [PLAN]: { text: '# P\n**Spec:** [spec](../specs/2026-10-07-englische-ansicht-design.md)\n', mtimeMs: NOW } })
+  const run = await discoverRun(fake, [R], OPTS)
+  expect(run.specPath).toBe(SPEC)
+  expect(run.specText).toBe('# Englische Ansicht\n')
+})
+
+test('resolveRoots resolves a symlinked project root', async () => {
+  const fake = fakeFs({ '/tmp/repo': { dir: true, realPath: '/private/tmp/repo' } })
+  expect(await resolveRoots(fake, '/tmp/repo')).toEqual(['/private/tmp/repo'])
+  expect(await resolveRoots(fakeFs({}), '/gone/repo/')).toEqual(['/gone/repo'])
+  expect(await resolveRoots(fakeFs({ '/x': { dir: true, realPath: '/' } }), '/x')).toEqual([])
+})
+
+test('resolveRoots adds the main checkout only when it has a .git', async () => {
+  const home = fakeFs({ '/home/u/worktrees/proj/.git': { dir: true } })
+  expect(await resolveRoots(home, '/home/u/worktrees/proj')).toEqual(['/home/u/worktrees/proj'])
+  expect(home.calls).toEqual([{ op: 'stat', path: '/home/u/worktrees/proj' }, { op: 'stat', path: '/home/u/.git' }])
+  const repo = fakeFs({ '/p/repo/.git': { dir: true }, '/p/repo/.worktrees/feat/.git': 'gitdir: x' })
+  expect(await resolveRoots(repo, '/p/repo/.worktrees/feat')).toEqual(['/p/repo/.worktrees/feat', '/p/repo'])
+  expect(repo.calls.every(c => c.op === 'stat')).toBe(true)
+  expect(await resolveRoots(fakeFs({ '/p/repo/.git': 'gitdir: y' }), '/p/repo')).toEqual(['/p/repo'])
 })

@@ -1,9 +1,13 @@
 // ── Search roots, path guard and run discovery ────────────────────────────
 // Decides which files the mod may ever look at (spec §5.1, §7). Pure apart
-// from the Fs port that register.tsx fills. Every stat, list and read goes
-// through `guard`: the path must lie inside a search root, match one of the
-// allowed shapes below for the access asked for, exist, and its realPath must
-// match the same shape inside a search root (a symlink out is refused).
+// from the Fs port that register.tsx fills. Every list and read, and every stat
+// but two, goes through `guard`: the path must lie inside a search root, match
+// one of the allowed shapes below for the access asked for, exist, and its
+// realPath must be present and match the same shape inside a search root (a
+// symlink out, or an answer without realPath, is refused).
+// The two documented exceptions are the raw stats in `resolveRoots`: the
+// project root itself (to learn its realPath) and `<main checkout>/.git` (to
+// confirm the main checkout is one); both are stat only, never read or listed.
 // Paths are POSIX strings; `..` that climbs above `/` is refused.
 
 import { parseLedger, parsePlan } from './progress'
@@ -15,7 +19,11 @@ export type FsStat = { kind: FsKind; mtimeMs: number; realPath?: string }
 export type Fs = {
   read(path: string): Promise<string>
   list(path: string): Promise<FsEntry[]>
-  /** Resolves null when the path is missing. */
+  /**
+   * Resolves null when the path is missing. Must be called with resolution on
+   * (the engine's `stat(path, { resolve: true })`) so the answer carries
+   * `realPath`; an answer without a string `realPath` is treated as leading nowhere.
+   */
   stat(path: string): Promise<FsStat | null>
 }
 
@@ -110,6 +118,24 @@ export function searchRoots(projectRoot: string): string[] {
   return [root]
 }
 
+/**
+ * The search roots for a session: the project root resolved through `stat`
+ * (lexical when the stat fails or has no realPath), plus the main checkout from
+ * `searchRoots` when `<main>/.git` exists. `/` is never a root.
+ */
+export async function resolveRoots(fs: Fs, projectRoot: string): Promise<string[]> {
+  const lexical = normalize(projectRoot)
+  if (lexical === null) return []
+  const stat = await attempt(() => fs.stat(lexical), null)
+  const real = stat && typeof stat.realPath === 'string' ? normalize(stat.realPath) : null
+  const root = real ?? lexical
+  if (root === '/') return []
+  const main = searchRoots(root)[1]
+  if (main === undefined) return [root]
+  const git = await attempt(() => fs.stat(join(main, '.git')), null)
+  return git ? [root, main] : [root]
+}
+
 // ── Allowed shapes and the guard ──────────────────────────────────────────
 
 type Shape = 'plans' | 'specs' | 'sdd' | 'workspace' | 'plan' | 'spec' | 'ledger' | 'marker' | 'worktrees'
@@ -160,7 +186,7 @@ async function attempt<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 type Guard = { fs: Fs; roots: string[] }
 type Admitted = { path: string; root: string; stat: FsStat }
 
-/** The only gate to the Fs: shape inside a root, exists, realPath of the same shape inside a root. */
+/** The gate to the Fs: shape inside a root, exists, realPath present and of the same shape inside a root. */
 async function guard(g: Guard, path: string, shape: Shape): Promise<Admitted | null> {
   const norm = normalize(path)
   if (norm === null) return null
@@ -168,7 +194,8 @@ async function guard(g: Guard, path: string, shape: Shape): Promise<Admitted | n
   if (root === null) return null
   const stat = await attempt(() => g.fs.stat(norm), null)
   if (!stat) return null
-  const real = normalize(typeof stat.realPath === 'string' ? stat.realPath : norm)
+  if (typeof stat.realPath !== 'string') return null
+  const real = normalize(stat.realPath)
   if (real === null || rootFor(real, g.roots, shape) === null) return null
   return { path: norm, root, stat }
 }
@@ -219,8 +246,13 @@ async function withPlan(g: Guard, run: RunFiles, planPath: string): Promise<void
   run.planText = plan.text === null ? null : trimPlan(plan.text)
   if (run.planText === null) return
   const ref = parsePlan(run.planText, basename(plan.path)).specPath
-  const specPath = ref === null ? null : resolveAgainst(plan.root, ref)
-  if (specPath !== null) await withSpec(g, run, specPath)
+  if (ref === null) return
+  // Relative to the plan's folder first (a Markdown link), then to its root.
+  for (const base of [dirname(plan.path), plan.root]) {
+    const specPath = resolveAgainst(base, ref)
+    if (specPath !== null) await withSpec(g, run, specPath)
+    if (run.specPath !== null) return
+  }
 }
 
 async function withSpec(g: Guard, run: RunFiles, specPath: string): Promise<void> {
