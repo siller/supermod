@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 – 2026-10-10
+
 - Only working agents count: a subagent's row closes with its own turn, a row the engine no longer lists is finished, and a closed row is revived only by a new step of its agent. Agents the engine never lists (a workflow's) close at the next refresh.
 
 ## 0.1.1 – 2026-10-10
