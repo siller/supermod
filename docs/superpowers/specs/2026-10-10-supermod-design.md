@@ -189,7 +189,7 @@ The README carries the validator's `hooks:` and `calls:` lines verbatim so a rea
 
 ## 9. Distribution
 
-Public repository `github.com/siller/supermod`, MIT, created and pushed as part of the build (the owner's `gh` is logged in to github.com as `siller`; the Bechtle GitHub Enterprise host the shell defaults to must not be used: every `gh` call for this project passes `GH_HOST=github.com` or `--repo siller/supermod`). Install line in the README: `/plugin install supermod --marketplace siller/supermod` (terminal session; Desktop sessions pick the user-scope install up). Semantic versions in `plugin.json`; `CHANGELOG.md` per release; the README names the Claude Code version each release was tested with and that the mods API is early access. A `v0.x` series until the API is stable. No Bechtle reference anywhere in the repository.
+Public repository `github.com/siller/supermod`, MIT, created and pushed as part of the build (the owner's `gh` is logged in to github.com as `siller`; the shell's default `gh` host is a private enterprise instance; every `gh` call for this project passes `GH_HOST=github.com` or `--repo siller/supermod`). Install line in the README: `/plugin install supermod --marketplace siller/supermod` (terminal session; Desktop sessions pick the user-scope install up). Semantic versions in `plugin.json`; `CHANGELOG.md` per release; the README names the Claude Code version each release was tested with and that the mods API is early access. A `v0.x` series until the API is stable. No reference to the author's employer anywhere in the repository.
 
 ## 10. Left to the builder
 
