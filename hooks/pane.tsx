@@ -297,9 +297,8 @@ export function renderPane(els: ElementTable, rows: Segment[][]): RenderElement 
 /** The band's content as one line of text, prefixed `SuperMod`, whether the band is hidden or not. */
 export function statusText(s: BandState, o: UiOptions): string {
   const m = bandModelOf({ ...s, ui: { ...s.ui, isHidden: false, options: o } })
-  const segments = planBandRow(m, 10_000).segments.map(x => x.text)
-  const rowText = segments.join('')
-  // No run: the band row leads with the title and has no agents group; the status names the context and the agent count itself.
-  if (m.percent === null) return `${t(o.language, 'title')}: ${t(o.language, 'noRun')}  ${segments.slice(1).join('').trim()}  ${t(o.language, 'agents')} ${m.agentsRunning}`
-  return `${t(o.language, 'title')}  ${rowText}`
+  const L = (key: LabelKey) => t(o.language, key)
+  // No run: the status still names the context and the agent count, from the model rather than the row.
+  if (m.percent === null) return `${L('title')}: ${L('noRun')}  ${L('ctx')} ${pct(m.ctxPercent)}  ${L('agents')} ${m.agentsRunning}`
+  return `${L('title')}  ${planBandRow(m, 10_000).segments.map(x => x.text).join('')}`
 }
