@@ -100,10 +100,12 @@ test('/supermod status answers with the band as one line on every surface', asyn
 })
 
 test('/supermod status without a run says no run detected', { options: { language: 'de' } }, async ($, on) => {
-  world(on)
+  world(on, { context: CONTEXT })
   await $.session.start({ surface: 'vscode', isInteractive: true, cwd: R })
   const text = (await run($, 'status')).text
   expect(text.startsWith('SuperMod: kein Lauf erkannt')).toBe(true)
+  expect(text).toContain('38%')
+  expect(text).toContain('Agenten 0')
   expect(text).not.toContain('\n')
 })
 
