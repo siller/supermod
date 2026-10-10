@@ -6,17 +6,15 @@
 // `supermod` answers for itself.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PluginOptions, Register, Timer, TurnUsage } from 'claude-code'
-import type { AgentsState, ContextState, ModelsState, RunState, StoredLedger, UiOptions, UiState } from '../types'
+import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
+import type { AgentsState, ContextState, ModelsState, RunState, UiOptions, UiState } from '../types'
 import { bandModel, planBandRow, renderBand } from './band'
-import { recordCompletions } from './eta'
+import { applyFiles, DEFAULT_OPTIONS, isFound, newRow, optionsOf, pathsIn, planKey, syncAgents, withSnapshot, ZERO } from './glue'
 import { t } from './i18n'
-import { computeRun, parseLedger, parsePlan, specTitle } from './progress'
-import type { Ledger, RunSnapshot } from './progress'
 import { discoverRun, discoverWorktreeRoots, resolveRoots } from './scan'
-import type { Fs, RunFiles } from './scan'
+import type { Fs } from './scan'
 import { addModel, addUsage, crossing, pushReading, tone, upsertAgent } from './usage'
-import type { AgentRow, Reading, Usage } from './usage'
+import type { Reading } from './usage'
 import { isBandVisible } from './visibility'
 
 const USAGE_EVERY_MS = 3_000
@@ -24,12 +22,7 @@ const FILES_EVERY_MS = 30_000
 const MAX_AGE_MS = 7 * 86_400_000
 const REFERENCED_CAP = 100
 const FINISHING = 'superpowers:finishing-a-development-branch'
-const FINISHED = new Set(['completed', 'failed', 'killed'])
-const ZERO: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-/** A run path inside a tool input: workspace, ledger, marker, plan or spec. */
-const RUN_PATH = /[^\s'"`<>()|;&=]*(?:\.superpowers\/sdd\/|docs\/superpowers\/(?:plans|specs)\/)[^\s'"`<>()|;&]*/g
 const SPEC_FILE = /(?:^|\/)docs\/superpowers\/specs\/[^/]+-design\.md$/
-const DEFAULT_OPTIONS: UiOptions = { language: 'en', warnPercent: 70, criticalPercent: 85, showCost: true, reviewMinutes: 10 }
 
 const runAtom = atom({ plugin: 'supermod', key: 'run' } as const, {
   files: null, snapshot: null, skillsSeen: [], sessionSpec: null, pinned: null, lastLedger: null, completions: [],
@@ -42,90 +35,6 @@ const uiAtom = atom({ plugin: 'supermod', key: 'ui' } as const, { isHidden: fals
 
 /** The running timers; a module reload drops them, the state stays. */
 let timers: { usage: Timer; files: Timer } | null = null
-
-// ── Pure helpers ──────────────────────────────────────────────────────────
-
-function optionsOf(o: PluginOptions): UiOptions {
-  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
-  return {
-    language: o.language === 'de' ? 'de' : 'en',
-    warnPercent: num(o.warnPercent, DEFAULT_OPTIONS.warnPercent),
-    criticalPercent: num(o.criticalPercent, DEFAULT_OPTIONS.criticalPercent),
-    showCost: typeof o.showCost === 'boolean' ? o.showCost : DEFAULT_OPTIONS.showCost,
-    reviewMinutes: num(o.reviewMinutes, DEFAULT_OPTIONS.reviewMinutes),
-  }
-}
-
-const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1)
-const storeLedger = (l: Ledger): StoredLedger => ({ planPath: l.planPath, tasks: [...l.tasks.values()] })
-const loadLedger = (s: StoredLedger): Ledger => ({ planPath: s.planPath, tasks: new Map(s.tasks.map(x => [x.n, x])) })
-const isFound = (f: RunFiles) => f.ledgerPath !== null || f.planPath !== null || f.specPath !== null || f.workspaceExists
-const sameRun = (a: RunFiles, b: RunFiles) =>
-  (a.planPath !== null && a.planPath === b.planPath) || (a.specPath !== null && a.specPath === b.specPath) || (a.ledgerPath !== null && a.ledgerPath === b.ledgerPath)
-const planKey = (p: string) => (p.includes('docs/superpowers/plans/') ? p.slice(p.lastIndexOf('docs/superpowers/plans/')) : null)
-
-/** Run paths named in a tool call's file path, path, command or prompt. */
-function pathsIn(e: Record<string, unknown>): string[] {
-  const out = new Set<string>()
-  for (const key of ['file_path', 'path', 'command', 'prompt']) {
-    const v = e[key]
-    if (typeof v !== 'string') continue
-    for (const m of v.slice(0, 100_000).matchAll(RUN_PATH)) out.add(m[0].replace(/^\.\//, '').replace(/[.,:;]+$/, ''))
-  }
-  return [...out]
-}
-
-const newRow = (id: string, now: number): AgentRow => ({
-  id, type: '', description: '', status: 'running', model: null, startedAt: now, endedAt: null, usage: ZERO, lastWindow: 0, steps: 0,
-})
-
-/** Rows with the engine's statuses applied, and rows for agents the mod has not seen spawn. */
-function syncAgents(rows: AgentRow[], listed: readonly { id: string; type: string; description: string; status: string }[], now: number): AgentRow[] {
-  let next = rows
-  for (const a of listed) {
-    const row = next.find(r => r.id === a.id) ?? { ...newRow(a.id, now), type: a.type, description: a.description }
-    if (row.status === a.status && next.includes(row)) continue
-    const endedAt = FINISHED.has(a.status) ? row.endedAt ?? now : row.endedAt
-    next = upsertAgent(next, { ...row, status: a.status, endedAt })
-  }
-  return next
-}
-
-/** The run as the band and pane draw it, from the stored files and what this session saw. */
-function snapshotOf(r: RunState): RunSnapshot | null {
-  const f = r.files
-  if (f === null && r.skillsSeen.length === 0) return null
-  return computeRun({
-    skillsSeen: new Set(r.skillsSeen),
-    specExists: f?.specPath != null,
-    planExists: f?.planPath != null,
-    ledger: f?.ledgerText != null ? parseLedger(f.ledgerText) : null,
-    workspaceExists: f?.workspaceExists ?? false,
-    files: f?.workspaceFiles ?? [],
-    plan: f?.planText != null && f.planPath !== null ? parsePlan(f.planText, basename(f.planPath)) : null,
-    finishingTurnCompleted: r.finishingTurnCompleted,
-    lastLedger: r.lastLedger === null ? null : loadLedger(r.lastLedger),
-    ...(f?.specText != null && f.specPath !== null ? { specTitle: specTitle(f.specText, basename(f.specPath)) } : {}),
-  })
-}
-
-const withSnapshot = (r: RunState): RunState => ({ ...r, snapshot: snapshotOf(r) })
-
-/** The run state after a discovery: new run resets the run's clock, a ledger adds completions. */
-function applyFiles(c: RunState, found: RunFiles | null, now: number): RunState {
-  const files = found ?? c.files
-  let next: RunState = { ...c, files, refreshedAt: now }
-  if (files === null) return withSnapshot(next)
-  const isNew = c.files === null || !sameRun(c.files, files)
-  if (isNew) next = { ...next, startedAt: now, completions: [], lastLedger: null, startedWithCompleted: false }
-  if (files.ledgerText !== null) {
-    const ledger = parseLedger(files.ledgerText)
-    const done = [...ledger.tasks.values()].filter(x => x.complete).map(x => x.n)
-    next = { ...next, lastLedger: storeLedger(ledger), completions: recordCompletions(next.completions, done, now) }
-    if (isNew) next.startedWithCompleted = done.length > 0
-  }
-  return withSnapshot(next)
-}
 
 /** Swallows a failure while observing: the event goes on whatever the mod's bookkeeping did. */
 async function observe(work: () => Promise<unknown>): Promise<void> {
