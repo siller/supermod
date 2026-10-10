@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Only working agents count: a subagent's row closes with its own turn, and a row the engine no longer lists is finished.
+
 ## 0.1.1 – 2026-10-10
 
 - `/supermod status` names the context percentage and the agent count even when no run is detected.

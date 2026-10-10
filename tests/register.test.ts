@@ -216,6 +216,19 @@ test('agent.spawn adds a row and passes the spawn on', async ($, on) => {
   expect(rows[0]).toMatchObject({ id: 'a1', type: 'general-purpose', description: 'Implement task 3', status: 'running', model: 'claude-sonnet-5-5', startedAt: NOW })
 })
 
+test('a subagent turn.complete closes its row, so only working agents count', async ($, on) => {
+  const w = world(on)
+  await $.agent.spawn({
+    tool_use_id: 'tu1', prompt: 'do it', description: 'Implement task 3', subagentType: 'general-purpose',
+    provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: false, fork: false,
+  })
+  expect(w.get('agents').rows[0].status).toBe('running')
+  await complete($, 'a1')
+  const row = w.get('agents').rows[0]
+  expect(row.status).toBe('completed')
+  expect(row.endedAt).toBe(NOW)
+})
+
 test('turn.complete refreshes context and run', async ($, on) => {
   const w = world(on)
   await complete($)

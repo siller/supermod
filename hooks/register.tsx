@@ -9,7 +9,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
 import type { AgentsState, ContextState, ModelsState, RunFiles, RunState, StoredBreakdown, UiOptions, UiState } from '../types'
 import { bandModel, planBandRow, renderBand } from './band'
-import { applyFiles, DEFAULT_OPTIONS, isFound, isNewRun, newRow, optionsOf, pathsIn, planKey, syncAgents, withReferenced, withSnapshot, ZERO } from './glue'
+import { applyFiles, DEFAULT_OPTIONS, finishAgent, isFound, isNewRun, newRow, optionsOf, pathsIn, planKey, syncAgents, withReferenced, withSnapshot, ZERO } from './glue'
 import { t } from './i18n'
 import { paneModel, planPane, renderPane, statusText } from './pane'
 import { discoverRun, discoverWorktreeRoots, resolveRoots } from './scan'
@@ -315,6 +315,14 @@ export const register: Register = (on, options) => {
       await observe(async () => {
         const c = await read($, runAtom)
         if (c.skillsSeen.includes(FINISHING) && !c.finishingTurnCompleted) await update($, runAtom, r => withSnapshot({ ...r, finishingTurnCompleted: true }))
+      })
+    } else {
+      // A subagent's answer is its own turn.complete: its row is done, whatever the engine still lists.
+      const id = e.agentId
+      await observe(async () => {
+        const now = await $.clock.now()
+        const rows = (await read($, agentsAtom)).rows
+        if (finishAgent(rows, id, now) !== rows) await update($, agentsAtom, a => ({ rows: finishAgent(a.rows, id, now) }))
       })
     }
     await refreshAll($, o)

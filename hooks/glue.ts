@@ -89,7 +89,17 @@ export function syncAgents(rows: AgentRow[], listed: readonly { id: string; type
     const endedAt = FINISHED.has(a.status) ? row.endedAt ?? now : row.endedAt
     next = upsertAgent(next, { ...row, status: a.status, endedAt })
   }
+  // The engine drops an agent's entry once its task is over; a row it no longer lists is finished.
+  const ids = new Set(listed.map(a => a.id))
+  for (const row of next) if (!ids.has(row.id)) next = finishAgent(next, row.id, now)
   return next
+}
+
+/** The row closed as `completed` at `now`; the same rows when the id is unknown or the row is finished already. */
+export function finishAgent(rows: AgentRow[], id: string, now: number): AgentRow[] {
+  const row = rows.find(r => r.id === id)
+  if (row === undefined || row.endedAt !== null || FINISHED.has(row.status)) return rows
+  return upsertAgent(rows, { ...row, status: 'completed', endedAt: now })
 }
 
 /** The run as the band and pane draw it, from the stored files and what this session saw. */

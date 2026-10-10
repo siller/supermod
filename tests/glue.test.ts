@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { applyFiles, newRow, pathsIn, snapshotOf, syncAgents, withReferenced } from '../hooks/glue'
+import { applyFiles, finishAgent, newRow, pathsIn, snapshotOf, syncAgents, withReferenced } from '../hooks/glue'
 import type { RunFiles, RunState } from '../types'
 import { LEDGER_MID_STORED, PLAN_NINE_STORED } from './fixtures'
 
@@ -31,6 +31,23 @@ test('syncAgents applies statuses, adds unseen agents and keeps the rows when no
   ], 5)
   expect(next.map(r => [r.id, r.status, r.endedAt, r.startedAt])).toEqual([['a1', 'completed', 5, 1], ['a2', 'running', null, 5]])
   expect(next[1].type).toBe('reviewer')
+})
+
+test('syncAgents finishes rows the engine no longer lists and leaves finished rows alone', async () => {
+  const rows = [{ ...newRow('a1', 1), type: 'implementer' }, { ...newRow('a2', 2), type: 'reviewer', status: 'killed', endedAt: 3 }]
+  const next = syncAgents(rows, [], 9)
+  expect(next.map(r => [r.id, r.status, r.endedAt])).toEqual([['a1', 'completed', 9], ['a2', 'killed', 3]])
+  // Nothing to change: the same rows come back.
+  expect(syncAgents(next, [], 10)).toBe(next)
+  expect(syncAgents(rows, [{ id: 'a1', type: 'implementer', description: '', status: 'running' }], 9)).toBe(rows)
+})
+
+test('finishAgent closes a live row once and ignores unknown or finished rows', async () => {
+  const rows = [{ ...newRow('a1', 1), type: 'implementer' }]
+  const done = finishAgent(rows, 'a1', 7)
+  expect(done.map(r => [r.id, r.status, r.endedAt])).toEqual([['a1', 'completed', 7]])
+  expect(finishAgent(done, 'a1', 8)).toBe(done)
+  expect(finishAgent(rows, 'zz', 7)).toBe(rows)
 })
 
 test('snapshotOf is null without files or skills and computes the run otherwise', async () => {
