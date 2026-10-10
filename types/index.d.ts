@@ -91,12 +91,23 @@ export type RunState = {
   referenced: string[]
 }
 
+/** The `/context`-style breakdown (`breakdown: 'summary'`) as the pane draws it: its rows, not its grid. */
+export type StoredBreakdown = {
+  /** When it was read; the next is asked for no sooner than 30 s later. */
+  at: number
+  /** The window the rows measure against. */
+  maxTokens: number
+  categories: { name: string; tokens: number; kind: 'used' | 'free' | 'buffer' | 'deferred' }[]
+}
+
 export type ContextState = {
   /** The last readings of the main context, oldest first. */
   ring: Reading[]
   compactions: number
   lastCompactionAt: number | null
   lastTone: 'success' | 'warning' | 'error'
+  /** The last breakdown, kept only while the pane is open; null otherwise. */
+  breakdown: StoredBreakdown | null
 }
 
 export type AgentsState = { rows: AgentRow[] }

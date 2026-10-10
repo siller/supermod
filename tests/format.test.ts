@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bar, fit, k, pct } from '../hooks/format'
+import { bar, dur, fit, hm, k, pct, spark, usd } from '../hooks/format'
 
 test('k formats magnitudes', async () => {
   expect(k(42)).toBe('42')
@@ -30,4 +30,13 @@ test('fit truncates with an ellipsis and pads', async () => {
 test('pct formats a percent or a dash', async () => {
   expect(pct(38)).toBe('38%')
   expect(pct(null)).toBe('–%')
+})
+
+test('dur, hm, spark and usd', async () => {
+  expect(dur(220_000)).toBe('3:40')
+  expect(dur(3_600_000)).toBe('1:00:00')
+  expect(dur(-5)).toBe('0:00')
+  expect(hm(new Date(2026, 9, 10, 9, 5).getTime())).toBe('09:05')
+  expect(spark([0, 10, 20, 25, 38, 50, 99, 100, null, 150])).toBe('▁▁▂▃▄▅██ █')
+  expect(usd(3.1)).toBe('$3.10')
 })

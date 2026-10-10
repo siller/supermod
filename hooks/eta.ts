@@ -16,6 +16,15 @@ export function medianMs(durations: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
 }
 
+/** The positive gaps between completions in time order, the first measured from the run's start when known. */
+export function taskDurations(c: Completion[], runStartedAt: number | null): number[] {
+  const sorted = [...c].sort((a, b) => a.at - b.at)
+  const durations: number[] = []
+  if (sorted.length > 0 && typeof runStartedAt === 'number' && runStartedAt < sorted[0].at) durations.push(sorted[0].at - runStartedAt)
+  for (let i = 1; i < sorted.length; i++) durations.push(sorted[i].at - sorted[i - 1].at)
+  return durations.filter(d => d > 0)
+}
+
 export function estimateRange(
   c: Completion[],
   runStartedAt: number | null,
@@ -23,11 +32,7 @@ export function estimateRange(
   reviewMinutes: number,
 ): { lowMs: number; highMs: number } | null {
   if (c.length < 2) return null
-  const sorted = [...c].sort((a, b) => a.at - b.at)
-  const durations: number[] = []
-  if (typeof runStartedAt === 'number' && runStartedAt < sorted[0].at) durations.push(sorted[0].at - runStartedAt)
-  for (let i = 1; i < sorted.length; i++) durations.push(sorted[i].at - sorted[i - 1].at)
-  const positive = durations.filter(d => d > 0)
+  const positive = taskDurations(c, runStartedAt)
   const median = medianMs(positive)
   if (positive.length === 0 || median <= 0) return null
   const total = median * Math.max(0, openTasks) + reviewMinutes * 60_000

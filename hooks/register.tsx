@@ -7,10 +7,11 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
-import type { AgentsState, ContextState, ModelsState, RunState, UiOptions, UiState } from '../types'
+import type { AgentsState, ContextState, ModelsState, RunState, StoredBreakdown, UiOptions, UiState } from '../types'
 import { bandModel, planBandRow, renderBand } from './band'
 import { applyFiles, DEFAULT_OPTIONS, isFound, newRow, optionsOf, pathsIn, planKey, syncAgents, withSnapshot, ZERO } from './glue'
 import { t } from './i18n'
+import { paneModel, planPane, renderPane, statusText } from './pane'
 import { discoverRun, discoverWorktreeRoots, resolveRoots } from './scan'
 import type { Fs } from './scan'
 import { addModel, addUsage, crossing, pushReading, tone, upsertAgent } from './usage'
@@ -19,6 +20,7 @@ import { isBandVisible } from './visibility'
 
 const USAGE_EVERY_MS = 3_000
 const FILES_EVERY_MS = 30_000
+const BREAKDOWN_EVERY_MS = 30_000
 const MAX_AGE_MS = 7 * 86_400_000
 const REFERENCED_CAP = 100
 const FINISHING = 'superpowers:finishing-a-development-branch'
@@ -28,7 +30,7 @@ const runAtom = atom({ plugin: 'supermod', key: 'run' } as const, {
   files: null, snapshot: null, skillsSeen: [], sessionSpec: null, pinned: null, lastLedger: null, completions: [],
   startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, refreshedAt: 0, referenced: [],
 } as RunState)
-const contextAtom = atom({ plugin: 'supermod', key: 'context' } as const, { ring: [], compactions: 0, lastCompactionAt: null, lastTone: 'success' } as ContextState)
+const contextAtom = atom({ plugin: 'supermod', key: 'context' } as const, { ring: [], compactions: 0, lastCompactionAt: null, lastTone: 'success', breakdown: null } as ContextState)
 const agentsAtom = atom({ plugin: 'supermod', key: 'agents' } as const, { rows: [] } as AgentsState)
 const modelsAtom = atom({ plugin: 'supermod', key: 'models' } as const, { totals: {}, engineUsd: null } as ModelsState)
 const uiAtom = atom({ plugin: 'supermod', key: 'ui' } as const, { isHidden: false, isPaneOpen: false, surfaces: [], options: DEFAULT_OPTIONS } as UiState)
@@ -100,13 +102,34 @@ async function refreshContext($: EngineInterface, o: UiOptions): Promise<void> {
   }
 }
 
-/** Context, whether the pane is open, and the engine's agent statuses; a failed part skips no other. */
+/** The `/context`-style rows while the pane is open, at most every 30 s; dropped once it closes. */
+async function refreshBreakdown($: EngineInterface): Promise<void> {
+  const isPaneOpen = (await read($, uiAtom)).isPaneOpen
+  const cur = (await read($, contextAtom)).breakdown ?? null
+  if (!isPaneOpen) {
+    if (cur !== null) await update($, contextAtom, c => ({ ...c, breakdown: null }))
+    return
+  }
+  const now = await $.clock.now()
+  if (cur !== null && now - cur.at < BREAKDOWN_EVERY_MS) return
+  const bd = (await $.session.usage({ breakdown: 'summary' })).context.breakdown
+  // None without a bound session: an empty one still waits out the 30 s.
+  const breakdown: StoredBreakdown = {
+    at: now,
+    maxTokens: bd?.maxTokens ?? 0,
+    categories: (bd?.categories ?? []).map(c => ({ name: c.name, tokens: c.tokens, kind: c.kind })),
+  }
+  await update($, contextAtom, c => ({ ...c, breakdown }))
+}
+
+/** Whether the pane is open, the context (and its breakdown while open), and the engine's agent statuses; a failed part skips no other. */
 async function refreshUsage($: EngineInterface, o: UiOptions): Promise<void> {
-  await observe(() => refreshContext($, o))
   await observe(async () => {
     const isPaneOpen = (await $.ui.panes()).some(p => p.id === 'supermod' && p.isShown)
     if ((await read($, uiAtom)).isPaneOpen !== isPaneOpen) await update($, uiAtom, u => ({ ...u, isPaneOpen }))
   })
+  await observe(() => refreshContext($, o))
+  await observe(() => refreshBreakdown($))
   await observe(async () => {
     const listed = await $.agent.list()
     const now = await $.clock.now()
@@ -180,14 +203,39 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // `/supermod`: no argument opens the pane; hide, show, status, use <path>, use auto.
   on('command.run', { command: 'supermod' }, async ($, e) => {
-    const arg = e.args.trim()
-    if (arg === 'hide' || arg === 'show') {
-      await update($, uiAtom, u => ({ ...u, isHidden: arg === 'hide' }))
+    const [verb = '', ...rest] = e.args.trim().split(/\s+/)
+    const arg = rest.join(' ')
+    if (verb === 'hide' || verb === 'show') {
+      await update($, uiAtom, u => ({ ...u, isHidden: verb === 'hide' }))
       await observe(() => syncTimers($, o))
-      return { text: t(o.language, arg === 'hide' ? 'hidden' : 'shown') }
+      return { text: t(o.language, verb === 'hide' ? 'hidden' : 'shown') }
     }
-    return { text: 'SuperMod: no run detected' }
+    if (verb === 'status') {
+      const state = { run: await read($, runAtom), context: await read($, contextAtom), agents: await read($, agentsAtom), ui: await read($, uiAtom) }
+      return { text: statusText(state, o) }
+    }
+    if (verb === 'use' && arg !== '') {
+      const pinned = arg === 'auto' ? null : arg.startsWith('/') ? arg : `${(await $.session.root()).replace(/\/+$/, '')}/${arg.replace(/^\.\//, '')}`
+      await update($, runAtom, c => ({ ...c, pinned }))
+      await observe(() => refreshRun($))
+      await observe(() => syncTimers($, o))
+      return { text: pinned === null ? t(o.language, 'unpinned') : t(o.language, 'pinned').replace('{p}', pinned) }
+    }
+    const opened = await $.ui.open({ id: 'supermod', title: 'SuperMod' })
+    await update($, uiAtom, u => ({ ...u, isPaneOpen: true }))
+    await observe(() => syncTimers($, o))
+    return { text: t(o.language, opened.isPlaced ? 'paneOpened' : 'surfaceFallback') }
+  })
+
+  // The pane reads state and the clock only; the command and the timers write.
+  on('ui.render', { component: 'Pane', requestId: 'supermod' }, async ($, e) => {
+    const state = {
+      run: await read($, runAtom), context: await read($, contextAtom), agents: await read($, agentsAtom), models: await read($, modelsAtom), ui: await read($, uiAtom),
+    }
+    const model = paneModel(state, o, await $.clock.now())
+    return renderPane($.ui.resolve(e), planPane(model, e.props.bodyColumns, e.props.scroll.bodyRows))
   })
 
   // The band reads state only; its buttons write from their own presses.

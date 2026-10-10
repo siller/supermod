@@ -12,7 +12,7 @@ const files = {
   specText: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false,
 }
 const context = (percent: number | null): ContextState => ({
-  ring: percent === null ? [] : [{ at: 0, percent, tokens: null, window: 1_000_000 }], compactions: 0, lastCompactionAt: null, lastTone: 'success',
+  ring: percent === null ? [] : [{ at: 0, percent, tokens: null, window: 1_000_000 }], compactions: 0, lastCompactionAt: null, lastTone: 'success', breakdown: null,
 })
 const OPTS = { warnPercent: 70 }
 

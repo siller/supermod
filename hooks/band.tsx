@@ -108,7 +108,7 @@ function flatten(groups: Group[], titleCells: number): Segment[] {
 }
 
 /** Cuts the row at `budget` cells, the last segment ending in an ellipsis. */
-function clip(segments: Segment[], budget: number): Segment[] {
+export function clip(segments: Segment[], budget: number): Segment[] {
   const out: Segment[] = []
   let left = Math.max(0, budget)
   for (const s of segments) {
@@ -144,7 +144,7 @@ export function planBandRow(m: BandModel, columns: number): BandRow {
 }
 
 /** A segment's Text props: its tone, `subtle` for a label, bold for a value; no prop left undefined. */
-function styleOf(s: Segment): { color?: string; bold?: boolean } {
+export function styleOf(s: Segment): { color?: string; bold?: boolean } {
   const color = s.tone ?? (s.dim ? 'subtle' : null)
   return { ...(color !== null ? { color } : {}), ...(s.bold ? { bold: true } : {}) }
 }

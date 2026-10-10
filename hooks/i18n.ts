@@ -48,6 +48,16 @@ const en = {
   'costEngine': 'session total from the engine',
   'costEstimate': 'estimate at list price',
   'surfaceFallback': 'This surface does not draw panes; use /supermod status',
+  'more': '+{n} more',
+  'perTask': 'per task',
+  'cacheHit': 'cache hit',
+  'cacheRead': 'cache read',
+  'cacheWrite': 'cache write',
+  'agent.running': 'running',
+  'agent.pending': 'pending',
+  'agent.completed': 'done',
+  'agent.failed': 'failed',
+  'agent.killed': 'stopped',
 } as const
 
 export type LabelKey = keyof typeof en
@@ -100,6 +110,16 @@ const de: Record<LabelKey, string> = {
   'costEngine': 'Sitzungssumme der Engine',
   'costEstimate': 'Schätzung zum Listenpreis',
   'surfaceFallback': 'Diese Oberfläche zeichnet keine Bereiche; /supermod status nutzen',
+  'more': '+{n} weitere',
+  'perTask': 'je Aufgabe',
+  'cacheHit': 'Cache-Treffer',
+  'cacheRead': 'Cache gelesen',
+  'cacheWrite': 'Cache geschrieben',
+  'agent.running': 'läuft',
+  'agent.pending': 'wartet',
+  'agent.completed': 'fertig',
+  'agent.failed': 'Fehler',
+  'agent.killed': 'gestoppt',
 }
 
 const LABELS: Record<Lang, Record<LabelKey, string>> = { en, de }

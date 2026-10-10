@@ -49,7 +49,7 @@ const RUN: RunState = {
 const NO_RUN: RunState = { ...RUN, files: null, snapshot: null, skillsSeen: [], completions: [], startedAt: null }
 
 const context = (percent: number): ContextState => ({
-  ring: [{ at: NOW, percent, tokens: percent * 10_000, window: 1_000_000 }], compactions: 0, lastCompactionAt: null, lastTone: 'success',
+  ring: [{ at: NOW, percent, tokens: percent * 10_000, window: 1_000_000 }], compactions: 0, lastCompactionAt: null, lastTone: 'success', breakdown: null,
 })
 const agent = (id: string, status: string): AgentRow => ({
   id, type: 'general-purpose', description: id, status, model: null, startedAt: T0, endedAt: status === 'completed' ? NOW : null,
