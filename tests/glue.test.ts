@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { applyFiles, finishAgent, newRow, pathsIn, snapshotOf, syncAgents, withReferenced } from '../hooks/glue'
+import { applyFiles, finishAgent, newRow, reviveAgent, pathsIn, snapshotOf, syncAgents, withReferenced } from '../hooks/glue'
 import type { RunFiles, RunState } from '../types'
 import { LEDGER_MID_STORED, PLAN_NINE_STORED } from './fixtures'
 
@@ -40,6 +40,20 @@ test('syncAgents finishes rows the engine no longer lists and leaves finished ro
   // Nothing to change: the same rows come back.
   expect(syncAgents(next, [], 10)).toBe(next)
   expect(syncAgents(rows, [{ id: 'a1', type: 'implementer', description: '', status: 'running' }], 9)).toBe(rows)
+})
+
+test('a closed row stays closed while the engine lists its agent as live; a new step revives it', async () => {
+  const closed = finishAgent([{ ...newRow('a1', 1), type: 'implementer' }], 'a1', 5)
+  expect(syncAgents(closed, [{ id: 'a1', type: 'implementer', description: '', status: 'running' }], 6)).toBe(closed)
+  const revived = reviveAgent(closed[0])
+  expect([revived.status, revived.endedAt]).toEqual(['running', null])
+  expect(reviveAgent(revived)).toBe(revived)
+  expect(syncAgents([revived], [], 7).map(r => [r.status, r.endedAt])).toEqual([['completed', 7]])
+})
+
+test('syncAgents does not close a row spawned while the list was fetched', async () => {
+  const rows = [{ ...newRow('a1', 9), type: 'implementer' }]
+  expect(syncAgents(rows, [], 9)).toBe(rows)
 })
 
 test('finishAgent closes a live row once and ignores unknown or finished rows', async () => {

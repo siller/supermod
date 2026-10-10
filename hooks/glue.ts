@@ -85,14 +85,22 @@ export function syncAgents(rows: AgentRow[], listed: readonly { id: string; type
   let next = rows
   for (const a of listed) {
     const row = next.find(r => r.id === a.id) ?? { ...newRow(a.id, now), type: a.type, description: a.description }
+    // A closed row stays closed while the engine still lists its agent as live: only a new step of the agent revives it.
+    if (row.endedAt !== null && !FINISHED.has(a.status)) continue
     if (row.status === a.status && next.includes(row)) continue
     const endedAt = FINISHED.has(a.status) ? row.endedAt ?? now : row.endedAt
     next = upsertAgent(next, { ...row, status: a.status, endedAt })
   }
-  // The engine drops an agent's entry once its task is over; a row it no longer lists is finished.
+  // The engine drops an agent's entry once its task is over: a row it no longer lists is finished.
+  // Only rows older than `now` (taken before the list call) count; one spawned meanwhile is not missing.
   const ids = new Set(listed.map(a => a.id))
-  for (const row of next) if (!ids.has(row.id)) next = finishAgent(next, row.id, now)
+  for (const row of next) if (!ids.has(row.id) && row.startedAt < now) next = finishAgent(next, row.id, now)
   return next
+}
+
+/** The row as a live one again: a closed agent that steps is working. */
+export function reviveAgent(row: AgentRow): AgentRow {
+  return row.endedAt === null && !FINISHED.has(row.status) ? row : { ...row, status: 'running', endedAt: null }
 }
 
 /** The row closed as `completed` at `now`; the same rows when the id is unknown or the row is finished already. */

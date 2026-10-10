@@ -9,7 +9,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
 import type { AgentsState, ContextState, ModelsState, RunFiles, RunState, StoredBreakdown, UiOptions, UiState } from '../types'
 import { bandModel, planBandRow, renderBand } from './band'
-import { applyFiles, DEFAULT_OPTIONS, finishAgent, isFound, isNewRun, newRow, optionsOf, pathsIn, planKey, syncAgents, withReferenced, withSnapshot, ZERO } from './glue'
+import { applyFiles, DEFAULT_OPTIONS, finishAgent, isFound, isNewRun, newRow, optionsOf, pathsIn, planKey, reviveAgent, syncAgents, withReferenced, withSnapshot, ZERO } from './glue'
 import { t } from './i18n'
 import { paneModel, planPane, renderPane, statusText } from './pane'
 import { discoverRun, discoverWorktreeRoots, resolveRoots } from './scan'
@@ -149,8 +149,8 @@ async function refreshUsage($: EngineInterface, o: UiOptions): Promise<void> {
   await observe(() => refreshContext($, o))
   await observe(() => refreshBreakdown($))
   await observe(async () => {
-    const listed = await $.agent.list()
     const now = await $.clock.now()
+    const listed = await $.agent.list()
     const rows = (await read($, agentsAtom)).rows
     if (syncAgents(rows, listed, now) !== rows) await update($, agentsAtom, a => ({ rows: syncAgents(a.rows, listed, now) }))
   })
@@ -170,7 +170,7 @@ async function recordStep($: EngineInterface, agentId: string | null, u: TurnUsa
   const now = await $.clock.now()
   const lastWindow = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
   await update($, agentsAtom, a => {
-    const row = a.rows.find(r => r.id === agentId) ?? newRow(agentId, now)
+    const row = reviveAgent(a.rows.find(r => r.id === agentId) ?? newRow(agentId, now))
     return { rows: upsertAgent(a.rows, { ...row, model: u.model, usage: addUsage(row.usage, u), lastWindow, steps: row.steps + 1 }) }
   })
 }

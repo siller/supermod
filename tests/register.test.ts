@@ -87,7 +87,8 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
       cost: { usd: 3.1 },
     },
   }))
-  on('agent.list', () => ({ value: [] }))
+  const agentList: { value: { id: string; type: string; description: string; status: string }[] } = { value: [] }
+  on('agent.list', () => ({ value: agentList.value }))
   on('ui.panes', () => ({ value: [] }))
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
@@ -131,7 +132,7 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
       usage: { input_tokens: 5, output_tokens: output, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20, model: e.model },
     }
   })
-  return { get: key => written[key], toasts, commands, lists: () => lists, reads, writes: key => writeCounts[key] ?? 0, readDelayMs, percent, denyUsage, clock }
+  return { get: key => written[key], toasts, commands, lists: () => lists, reads, writes: key => writeCounts[key] ?? 0, readDelayMs, percent, denyUsage, clock, agentList }
 }
 
 const start = ($: any) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: R })
@@ -223,10 +224,17 @@ test('a subagent turn.complete closes its row, so only working agents count', as
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: false, fork: false,
   })
   expect(w.get('agents').rows[0].status).toBe('running')
+  // The engine still lists it as running: only the hook can close the row.
+  w.agentList.value = [{ id: 'a1', type: 'general-purpose', description: 'Implement task 3', status: 'running' }]
   await complete($, 'a1')
   const row = w.get('agents').rows[0]
   expect(row.status).toBe('completed')
   expect(row.endedAt).toBe(NOW)
+  // Resumed: its next step revives the row, its next turn closes it again.
+  await step($, 'claude-sonnet-5-5', 'a1')
+  expect(w.get('agents').rows[0]).toMatchObject({ status: 'running', endedAt: null, steps: 1 })
+  await complete($, 'a1')
+  expect(w.get('agents').rows[0].status).toBe('completed')
 })
 
 test('turn.complete refreshes context and run', async ($, on) => {
