@@ -82,7 +82,7 @@ const MODEL_NAMES: Record<string, string> = {
   'fable': 'Fable',
 }
 /** Cells of an agent row besides its type: mark, status, model, ctx, tokens, elapsed and the gaps. */
-const AGENT_FIXED = 2 + 8 + 1 + 10 + 1 + 4 + 1 + 8 + 1 + 6
+const AGENT_FIXED = 2 + 8 + 1 + 1 + 10 + 1 + 4 + 1 + 8 + 1 + 6
 const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 
 /** `claude-sonnet-5-5` → `Sonnet 5.5`; an unknown id without its `claude-` prefix. */
@@ -235,13 +235,13 @@ export function planPane(m: PaneModel, columns: number, rows: number): Segment[]
   blank()
 
   // 4. Agents, newest first
-  out.push([{ text: L('agents'), bold: true }, { text: ` · ${m.running} ${L('agent.running')} · ctx ${L('approx')}`, dim: true }])
+  out.push([{ text: L('agents'), bold: true }, { text: ` · ${m.running} ${L('agent.running')} · ${L('context')} ${L('approx')}`, dim: true }])
   const cap = Math.max(1, rows - NON_AGENT_ROWS)
   const typeCells = Math.max(4, columns - AGENT_FIXED)
   for (const a of m.agents.slice(0, cap)) {
     const type = a.type.length > typeCells ? a.type.slice(0, typeCells - 1) + '…' : a.type.padEnd(typeCells)
     const text = [
-      `${a.mark} ${a.status.padEnd(8).slice(0, 8)}${type}`,
+      `${a.mark} ${a.status.padEnd(8).slice(0, 8)} ${type}`,
       a.model.padEnd(10).slice(0, 10),
       pct(a.ctxPercent).padStart(4),
       `${k(a.tokensIn)}/${k(a.tokensOut)}`.padStart(8),

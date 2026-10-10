@@ -264,3 +264,19 @@ test('statusText is the band in one line, prefixed SuperMod', async () => {
   expect(statusText({ ...FULL, run: NO_RUN }, OPTIONS)).toBe('SuperMod: no run detected')
   expect(statusText({ ...FULL, run: NO_RUN }, { ...OPTIONS, language: 'de' })).toBe('SuperMod: kein Lauf erkannt')
 })
+
+test('German agent rows keep a space after the status, the header has no hard-coded label', { options: { language: 'de' } }, async ($, on) => {
+  const killed: AgentsState = { rows: [agent('k1', { type: 'implementer-mechanical', status: 'killed', endedAt: NOW })] }
+  world(on, { ...SEED, agents: killed })
+  for (const surface of SURFACES) {
+    const ui = await mount($, surface)
+    const shown = await rows(ui)
+    expect(shown.some(s => /^✗ gestoppt implementer/.test(s))).toBe(true)
+    const header = shown.find(s => s.startsWith('Agenten'))
+    expect(header).toBeDefined()
+    expect(header).not.toContain('ctx')
+    expect(header).toContain('Kontext ca.')
+    for (const s of shown) expect(s.length).toBeLessThanOrEqual(60)
+    await ui.unmount()
+  }
+})
