@@ -300,12 +300,15 @@ test('resolveRoots resolves a symlinked project root', async () => {
   expect(await resolveRoots(fakeFs({ '/x': { dir: true, realPath: '/' } }), '/x')).toEqual([])
 })
 
-test('resolveRoots adds the main checkout only when it has a .git', async () => {
-  const home = fakeFs({ '/home/u/worktrees/proj/.git': { dir: true } })
+test('resolveRoots adds the main checkout only for a linked worktree whose main has a .git', async () => {
+  // A clone of its own under ~/worktrees (its .git a folder) never pulls in the home folder, even with ~/.git present.
+  const home = fakeFs({ '/home/u/.git': { dir: true }, '/home/u/worktrees/proj/.git': { dir: true } })
   expect(await resolveRoots(home, '/home/u/worktrees/proj')).toEqual(['/home/u/worktrees/proj'])
-  expect(home.calls).toEqual([{ op: 'stat', path: '/home/u/worktrees/proj' }, { op: 'stat', path: '/home/u/.git' }])
+  expect(home.calls).toEqual([{ op: 'stat', path: '/home/u/worktrees/proj' }, { op: 'stat', path: '/home/u/worktrees/proj/.git' }])
+  // A linked worktree (its .git a file) adds the main checkout when that has a .git; stat only, nothing read.
   const repo = fakeFs({ '/p/repo/.git': { dir: true }, '/p/repo/.worktrees/feat/.git': 'gitdir: x' })
   expect(await resolveRoots(repo, '/p/repo/.worktrees/feat')).toEqual(['/p/repo/.worktrees/feat', '/p/repo'])
   expect(repo.calls.every(c => c.op === 'stat')).toBe(true)
+  expect(await resolveRoots(fakeFs({ '/p/repo/.worktrees/feat/.git': 'gitdir: x' }), '/p/repo/.worktrees/feat')).toEqual(['/p/repo/.worktrees/feat'])
   expect(await resolveRoots(fakeFs({ '/p/repo/.git': 'gitdir: y' }), '/p/repo')).toEqual(['/p/repo'])
 })

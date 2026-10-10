@@ -5,9 +5,10 @@
 // one of the allowed shapes below for the access asked for, exist, and its
 // realPath must be present and match the same shape inside a search root (a
 // symlink out, or an answer without realPath, is refused).
-// The two documented exceptions are the raw stats in `resolveRoots`: the
-// project root itself (to learn its realPath) and `<main checkout>/.git` (to
-// confirm the main checkout is one); both are stat only, never read or listed.
+// The three documented exceptions are the raw stats in `resolveRoots`: the
+// project root itself (to learn its realPath), `<project root>/.git` (a file
+// marks a linked worktree) and `<main checkout>/.git` (to confirm the main
+// checkout is one); all are stat only, never read or listed.
 // Paths are POSIX strings; `..` that climbs above `/` is refused.
 
 import { parseLedger, parsePlan } from './progress'
@@ -121,7 +122,9 @@ export function searchRoots(projectRoot: string): string[] {
 /**
  * The search roots for a session: the project root resolved through `stat`
  * (lexical when the stat fails or has no realPath), plus the main checkout from
- * `searchRoots` when `<main>/.git` exists. `/` is never a root.
+ * `searchRoots` when the root is a linked worktree (`<root>/.git` is a file)
+ * and `<main>/.git` exists. A clone of its own inside a `worktrees` folder (its
+ * `.git` a folder) never adds the folder above it. `/` is never a root.
  */
 export async function resolveRoots(fs: Fs, projectRoot: string): Promise<string[]> {
   const lexical = normalize(projectRoot)
@@ -132,6 +135,8 @@ export async function resolveRoots(fs: Fs, projectRoot: string): Promise<string[
   if (root === '/') return []
   const main = searchRoots(root)[1]
   if (main === undefined) return [root]
+  const own = await attempt(() => fs.stat(join(root, '.git')), null)
+  if (!own || own.kind !== 'file') return [root]
   const git = await attempt(() => fs.stat(join(main, '.git')), null)
   return git ? [root, main] : [root]
 }
