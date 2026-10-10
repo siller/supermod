@@ -40,6 +40,8 @@ type World = {
   lists: () => number
   /** The context percent the next `session.usage` answers. */
   percent: { value: number }
+  /** When true, `session.usage` is refused. */
+  denyUsage: { value: boolean }
   clock: ReturnType<typeof mock.clock>
 }
 
@@ -49,6 +51,7 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
   const toasts: string[] = []
   const commands: string[] = []
   const percent = { value: 38 }
+  const denyUsage = { value: false }
   let lists = 0
   const clock = mock.clock(on, { now: NOW })
   const written: Partial<Record<Key, unknown>> = {}
@@ -64,7 +67,7 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
   })
   on('session.root', () => ({ value: R }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
-  on('session.usage', () => ({
+  on('session.usage', () => denyUsage.value ? { deny: 'no usage' } : ({
     value: {
       startedAt: 0,
       context: { tokens: percent.value * 10_000, window: 1_000_000, percent: percent.value },
@@ -114,7 +117,7 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
       usage: { input_tokens: 5, output_tokens: output, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20, model: e.model },
     }
   })
-  return { get: key => written[key], toasts, commands, lists: () => lists, percent, clock }
+  return { get: key => written[key], toasts, commands, lists: () => lists, percent, denyUsage, clock }
 }
 
 const start = ($: any) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: R })
@@ -307,4 +310,31 @@ test('a timer tick that finds nothing visible stops the timers', async ($, on) =
   const after = w.lists()
   await w.clock.advance(120_000)
   expect(w.lists()).toBe(after)
+})
+
+test('a run in a worktree of the main checkout is found from the main checkout', async ($, on) => {
+  const FEAT = R + '/.worktrees/feat'
+  const w = world(on, {
+    [R + '/.git']: { dir: true },
+    [FEAT + '/.git']: 'gitdir: /p/repo/.git/worktrees/feat',
+    [FEAT + '/.superpowers/sdd/2026-10-07-englische-ansicht/progress.md']: { text: LEDGER_MID, mtimeMs: NOW - DAY },
+    [FEAT + '/.superpowers/sdd/2026-10-07-englische-ansicht/plan-path']: 'docs/superpowers/plans/2026-10-07-englische-ansicht.md\n',
+    [FEAT + '/docs/superpowers/plans/2026-10-07-englische-ansicht.md']: { text: PLAN_NINE, mtimeMs: NOW - 4 * DAY },
+  })
+  await complete($)
+  const run = w.get('run')
+  expect(run.files.ledgerPath).toBe(FEAT + '/.superpowers/sdd/2026-10-07-englische-ansicht/progress.md')
+  expect(run.files.planPath).toBe(FEAT + '/docs/superpowers/plans/2026-10-07-englische-ansicht.md')
+  expect(run.snapshot.completed).toBe(2)
+})
+
+test('a failed usage read does not skip the run refresh', async ($, on) => {
+  const w = world(on)
+  w.denyUsage.value = true
+  const r = await complete($)
+  expect(r.text).toBe('')
+  expect(w.get('run').snapshot).not.toBeNull()
+  await start($)
+  expect(w.commands).toContain('supermod')
+  expect(w.get('ui').surfaces).toEqual(['terminal'])
 })

@@ -150,7 +150,9 @@ async function refreshRun($: EngineInterface): Promise<void> {
   const fs = fsOf($)
   const cur = await read($, runAtom)
   const roots = await resolveRoots(fs, await $.session.root())
-  if (roots.length > 1) for (const r of await discoverWorktreeRoots(fs, roots[1])) if (!roots.includes(r)) roots.push(r)
+  // The worktree folders of the main checkout, whether the session sits in it or in one of its worktrees.
+  const main = roots[1] ?? roots[0]
+  if (main !== undefined) for (const r of await discoverWorktreeRoots(fs, main)) if (!roots.includes(r)) roots.push(r)
   const now = await $.clock.now()
   const opts = { pinned: cur.pinned, sessionSpec: cur.sessionSpec, now, maxAgeMs: MAX_AGE_MS }
   let found = await discoverRun(fs, roots, opts)
@@ -188,15 +190,26 @@ async function refreshContext($: EngineInterface, o: UiOptions): Promise<void> {
   }
 }
 
-/** Context, whether the pane is open, and the engine's agent statuses. */
+/** Context, whether the pane is open, and the engine's agent statuses; a failed part skips no other. */
 async function refreshUsage($: EngineInterface, o: UiOptions): Promise<void> {
-  await refreshContext($, o)
-  const isPaneOpen = (await $.ui.panes()).some(p => p.id === 'supermod' && p.isShown)
-  if ((await read($, uiAtom)).isPaneOpen !== isPaneOpen) await update($, uiAtom, u => ({ ...u, isPaneOpen }))
-  const listed = await $.agent.list()
-  const now = await $.clock.now()
-  const rows = (await read($, agentsAtom)).rows
-  if (syncAgents(rows, listed, now) !== rows) await update($, agentsAtom, a => ({ rows: syncAgents(a.rows, listed, now) }))
+  await observe(() => refreshContext($, o))
+  await observe(async () => {
+    const isPaneOpen = (await $.ui.panes()).some(p => p.id === 'supermod' && p.isShown)
+    if ((await read($, uiAtom)).isPaneOpen !== isPaneOpen) await update($, uiAtom, u => ({ ...u, isPaneOpen }))
+  })
+  await observe(async () => {
+    const listed = await $.agent.list()
+    const now = await $.clock.now()
+    const rows = (await read($, agentsAtom)).rows
+    if (syncAgents(rows, listed, now) !== rows) await update($, agentsAtom, a => ({ rows: syncAgents(a.rows, listed, now) }))
+  })
+}
+
+/** Usage, run, then the timers, each on its own so one failure skips none of the others. */
+async function refreshAll($: EngineInterface, o: UiOptions): Promise<void> {
+  await observe(() => refreshUsage($, o))
+  await observe(() => refreshRun($))
+  await observe(() => syncTimers($, o))
 }
 
 /** Adds one model response's usage to its model's totals and, for a subagent, to its row. */
@@ -250,11 +263,10 @@ export const register: Register = (on, options) => {
     })
     await observe(async () => {
       const surfaces = await $.session.surfaces()
-      await update($, uiAtom, u => ({ ...u, options: o, surfaces: [...surfaces] }))
-      await refreshUsage($, o)
-      await refreshRun($)
-      await syncTimers($, o)
+      await update($, uiAtom, u => ({ ...u, surfaces: [...surfaces] }))
     })
+    await observe(() => update($, uiAtom, u => ({ ...u, options: o })))
+    await refreshAll($, o)
     return next(e)
   })
 
@@ -271,10 +283,8 @@ export const register: Register = (on, options) => {
   on('skill.prompt', async ($, e, next) => {
     const r = await next(e)
     if (e.skill.startsWith('superpowers:')) {
-      await observe(async () => {
-        await update($, runAtom, c => (c.skillsSeen.includes(e.skill) ? c : withSnapshot({ ...c, skillsSeen: [...c.skillsSeen, e.skill] })))
-        await syncTimers($, o)
-      })
+      await observe(() => update($, runAtom, c => (c.skillsSeen.includes(e.skill) ? c : withSnapshot({ ...c, skillsSeen: [...c.skillsSeen, e.skill] }))))
+      await observe(() => syncTimers($, o))
     }
     return r
   })
@@ -284,42 +294,39 @@ export const register: Register = (on, options) => {
     const paths = pathsIn(input)
     const r = await next(e)
     if (paths.length > 0) {
-      await observe(async () => {
-        const file = input.file_path
-        const spec = (e.tool === 'Write' || e.tool === 'Edit') && typeof file === 'string' && SPEC_FILE.test(file) ? file : null
-        await update($, runAtom, c => ({
+      const file = input.file_path
+      const spec = (e.tool === 'Write' || e.tool === 'Edit') && typeof file === 'string' && SPEC_FILE.test(file) ? file : null
+      await observe(() =>
+        update($, runAtom, c => ({
           ...c,
           referenced: [...c.referenced.filter(p => !paths.includes(p)), ...paths].slice(-REFERENCED_CAP),
           sessionSpec: spec ?? c.sessionSpec,
-        }))
-        await refreshRun($)
-        await syncTimers($, o)
-      })
+        })),
+      )
+      await observe(() => refreshRun($))
+      await observe(() => syncTimers($, o))
     }
     return r
   })
 
   on('turn.step', async function* ($, e, next) {
     const r = yield* next(e)
-    await observe(async () => {
-      if (r.usage) await recordStep($, e.agentId ?? null, r.usage)
-      if (e.agentId === undefined) await refreshContext($, o)
-    })
+    const usage = r.usage
+    if (usage) await observe(() => recordStep($, e.agentId ?? null, usage))
+    if (e.agentId === undefined) await observe(() => refreshContext($, o))
     return r
   })
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    await observe(async () => {
-      if (e.agentId === undefined) {
-        await update($, runAtom, c =>
+    if (e.agentId === undefined) {
+      await observe(() =>
+        update($, runAtom, c =>
           c.skillsSeen.includes(FINISHING) && !c.finishingTurnCompleted ? withSnapshot({ ...c, finishingTurnCompleted: true }) : c,
-        )
-      }
-      await refreshUsage($, o)
-      await refreshRun($)
-      await syncTimers($, o)
-    })
+        ),
+      )
+    }
+    await refreshAll($, o)
     return r
   })
 
