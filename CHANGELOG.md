@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.1.0 – unreleased
+## 0.1.0 – 2026-10-10
 
 - One-line band above the prompt: Superpowers progress with the current task and station, context fill with warning and critical colours and one toast per crossing, running agents, remaining-time range; width-aware down to 80 columns.
 - Detail pane (`/supermod`): overall progress, per-step status, context window with history and breakdown, agents, tokens and cost, remaining time.
