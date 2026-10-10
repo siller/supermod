@@ -10,9 +10,13 @@
 // marks a linked worktree) and `<main checkout>/.git` (to confirm the main
 // checkout is one); all are stat only, never read or listed.
 // Paths are POSIX strings; `..` that climbs above `/` is refused.
+// Each file is parsed as it is read and only the parsed value is kept (the
+// state never holds a file's text); given the run as last found, a file whose
+// stat answers the same mtime as when it was read is not read again (§5.1).
 
-import { parseLedger, parsePlan } from './progress'
-import type { WorkspaceFile } from './progress'
+import type { RunFiles, StoredLedger, StoredPlan } from '../types'
+import { parseLedger, parsePlan, specTitle } from './progress'
+import type { Ledger, Plan } from './progress'
 
 export type FsKind = 'file' | 'dir' | 'other'
 export type FsEntry = { name: string; kind: FsKind; mtimeMs: number }
@@ -28,23 +32,20 @@ export type Fs = {
   stat(path: string): Promise<FsStat | null>
 }
 
-export type RunFiles = {
-  /** The search root the run was found in. */
-  root: string | null
-  ledgerPath: string | null
-  ledgerText: string | null
-  planPath: string | null
-  planText: string | null
-  specPath: string | null
-  specText: string | null
-  workspaceDir: string | null
-  workspaceFiles: WorkspaceFile[]
-  workspaceExists: boolean
+export type DiscoverOptions = {
+  pinned: string | null
+  sessionSpec: string | null
+  now: number
+  maxAgeMs: number
+  /** The run as last found: a file it read whose mtime is unchanged keeps its parsed value, unread. */
+  prior?: RunFiles | null
 }
 
-export type DiscoverOptions = { pinned: string | null; sessionSpec: string | null; now: number; maxAgeMs: number }
-
 const PLAN_HEADINGS_ONLY_ABOVE = 1_048_576
+/** Titles kept for the band and pane (§7: at most 80 characters of any title). */
+const TITLE_CAP = 80
+/** A path named inside a file (marker, ledger header, Spec line) longer than this is ignored. */
+const PATH_CAP = 1_024
 const WORKTREE_FOLDERS = [['.claude', 'worktrees'], ['.worktrees'], ['worktrees']]
 
 // ── Paths ─────────────────────────────────────────────────────────────────
@@ -188,7 +189,7 @@ async function attempt<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-type Guard = { fs: Fs; roots: string[] }
+type Guard = { fs: Fs; roots: string[]; prior: RunFiles | null }
 type Admitted = { path: string; root: string; stat: FsStat }
 
 /** The gate to the Fs: shape inside a root, exists, realPath present and of the same shape inside a root. */
@@ -213,19 +214,51 @@ async function listDir(g: Guard, path: string, shape: Shape): Promise<{ path: st
   return { path: ok.path, entries: Array.isArray(entries) ? entries.filter(e => e !== null && typeof e === 'object' && isPlainName(e.name)) : [] }
 }
 
-/** Text of an admitted file; null when refused or missing, text null when the read fails. */
-async function load(g: Guard, path: string, shape: Shape): Promise<{ path: string; root: string; text: string | null } | null> {
+type Loaded = { path: string; root: string; mtimeMs: number; text: string | null; prior: RunFiles | null }
+
+/**
+ * An admitted file; null when refused or missing. When the prior run read this
+ * same file (`pathOf` names it there) at the mtime the stat answers now, that
+ * run is handed back as `prior` and nothing is read; otherwise the text, null
+ * when the read fails.
+ */
+async function load(g: Guard, path: string, shape: Shape, pathOf: (r: RunFiles) => string | null): Promise<Loaded | null> {
   const ok = await guard(g, path, shape)
   if (!ok || ok.stat.kind !== 'file') return null
+  const at = { path: ok.path, root: ok.root, mtimeMs: ok.stat.mtimeMs }
+  const p = g.prior
+  if (p !== null && pathOf(p) === ok.path && p.stamps.some(s => s.path === ok.path && s.mtimeMs === at.mtimeMs)) return { ...at, text: null, prior: p }
   const text = await attempt(() => g.fs.read(ok.path), null)
-  return { path: ok.path, root: ok.root, text: typeof text === 'string' ? text : null }
+  return { ...at, text: typeof text === 'string' ? text : null, prior: null }
 }
+
+/** The loaded file's value, the prior run's when unchanged; a file read or kept is stamped with its mtime. */
+function parsed<T>(run: RunFiles, f: Loaded, valueOf: (r: RunFiles) => T | null, parse: (text: string) => T | null): T | null {
+  const value = f.prior !== null ? valueOf(f.prior) : f.text !== null ? parse(f.text) : null
+  if ((f.prior !== null || f.text !== null) && Number.isFinite(f.mtimeMs)) run.stamps.push({ path: f.path, mtimeMs: f.mtimeMs })
+  return value
+}
+
+const capTitle = (t: string) => (t.length > TITLE_CAP ? t.slice(0, TITLE_CAP - 1) + '…' : t)
+const capPath = (p: string | null) => (p !== null && p.length <= PATH_CAP ? p : null)
+
+const storeLedger = (l: Ledger): StoredLedger => ({ planPath: capPath(l.planPath), tasks: [...l.tasks.values()] })
+
+const storePlan = (p: Plan): StoredPlan => ({
+  title: capTitle(p.title),
+  specPath: capPath(p.specPath),
+  tasks: [...p.taskTitles].map(([n, title]) => ({ n, title: capTitle(title) })),
+})
+
+/** The prior run when it carries stamps (state written by an older version does not). */
+const usable = (prior: RunFiles | null | undefined): RunFiles | null =>
+  prior !== null && typeof prior === 'object' && Array.isArray(prior.stamps) ? prior : null
 
 // ── Run assembly ──────────────────────────────────────────────────────────
 
 const emptyRun = (): RunFiles => ({
-  root: null, ledgerPath: null, ledgerText: null, planPath: null, planText: null,
-  specPath: null, specText: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false,
+  root: null, ledgerPath: null, ledger: null, marker: null, planPath: null, plan: null,
+  specPath: null, specTitle: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false, stamps: [],
 })
 
 const foundAnything = (r: RunFiles) => r.ledgerPath !== null || r.planPath !== null || r.specPath !== null || r.workspaceExists
@@ -245,12 +278,11 @@ function trimPlan(text: string): string {
 }
 
 async function withPlan(g: Guard, run: RunFiles, planPath: string): Promise<void> {
-  const plan = await load(g, planPath, 'plan')
+  const plan = await load(g, planPath, 'plan', r => r.planPath)
   if (!plan) return
   run.planPath = plan.path
-  run.planText = plan.text === null ? null : trimPlan(plan.text)
-  if (run.planText === null) return
-  const ref = parsePlan(run.planText, basename(plan.path)).specPath
+  run.plan = parsed(run, plan, r => r.plan, text => storePlan(parsePlan(trimPlan(text), basename(plan.path))))
+  const ref = run.plan?.specPath ?? null
   if (ref === null) return
   // Relative to the plan's folder first (a Markdown link), then to its root.
   for (const base of [dirname(plan.path), plan.root]) {
@@ -261,10 +293,10 @@ async function withPlan(g: Guard, run: RunFiles, planPath: string): Promise<void
 }
 
 async function withSpec(g: Guard, run: RunFiles, specPath: string): Promise<void> {
-  const spec = await load(g, specPath, 'spec')
+  const spec = await load(g, specPath, 'spec', r => r.specPath)
   if (!spec) return
   run.specPath = spec.path
-  run.specText = spec.text
+  run.specTitle = parsed(run, spec, r => r.specTitle, text => capTitle(specTitle(text, basename(spec.path))))
 }
 
 async function withWorkspace(g: Guard, run: RunFiles, dir: string): Promise<void> {
@@ -273,10 +305,10 @@ async function withWorkspace(g: Guard, run: RunFiles, dir: string): Promise<void
   run.workspaceDir = ws.path
   run.workspaceExists = true
   run.workspaceFiles = ws.entries.filter(e => e.kind === 'file').map(e => ({ name: e.name, mtimeMs: e.mtimeMs }))
-  const ledger = await load(g, join(ws.path, 'progress.md'), 'ledger')
+  const ledger = await load(g, join(ws.path, 'progress.md'), 'ledger', r => r.ledgerPath)
   if (ledger) {
     run.ledgerPath = ledger.path
-    run.ledgerText = ledger.text
+    run.ledger = parsed(run, ledger, r => r.ledger, text => storeLedger(parseLedger(text)))
   }
 }
 
@@ -285,9 +317,9 @@ async function runFromWorkspace(g: Guard, root: string, dir: string): Promise<Ru
   const run = { ...emptyRun(), root }
   await withWorkspace(g, run, dir)
   if (!run.workspaceExists) return run
-  const marker = await load(g, join(dir, 'plan-path'), 'marker')
-  const fromMarker = marker?.text?.split(/\r?\n/)[0].trim() || null
-  const ref = fromMarker ?? (run.ledgerText === null ? null : parseLedger(run.ledgerText).planPath)
+  const marker = await load(g, join(dir, 'plan-path'), 'marker', r => (r.workspaceDir === null ? null : join(r.workspaceDir, 'plan-path')))
+  if (marker) run.marker = parsed(run, marker, r => r.marker, text => capPath(text.split(/\r?\n/)[0].trim() || null))
+  const ref = run.marker ?? run.ledger?.planPath ?? null
   const planPath = ref ? resolveAgainst(root, ref) : null
   if (planPath !== null) await withPlan(g, run, planPath)
   return run
@@ -357,7 +389,7 @@ async function freshPlans(g: Guard, fresh: (mtimeMs: number) => boolean): Promis
  * this session → newest plan in the age window → nothing. Never throws.
  */
 export async function discoverRun(fs: Fs, roots: string[], opts: DiscoverOptions): Promise<RunFiles> {
-  const g: Guard = { fs, roots: cleanRoots(roots) }
+  const g: Guard = { fs, roots: cleanRoots(roots), prior: usable(opts.prior) }
   if (g.roots.length === 0) return emptyRun()
   const fresh = (mtimeMs: number) => opts.now - mtimeMs <= opts.maxAgeMs
 
@@ -382,7 +414,7 @@ export async function discoverRun(fs: Fs, roots: string[], opts: DiscoverOptions
 
 /** Folders under the main checkout's worktree folders (names only), as further search roots. */
 export async function discoverWorktreeRoots(fs: Fs, mainRoot: string): Promise<string[]> {
-  const g: Guard = { fs, roots: cleanRoots([mainRoot]) }
+  const g: Guard = { fs, roots: cleanRoots([mainRoot]), prior: null }
   if (g.roots.length === 0) return []
   const out: string[] = []
   for (const folder of WORKTREE_FOLDERS) {

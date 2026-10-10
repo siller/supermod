@@ -4,12 +4,12 @@ import type { ContextState, RunState } from '../types'
 
 const run = (over: Partial<RunState> = {}): RunState => ({
   files: null, snapshot: null, skillsSeen: [], sessionSpec: null, pinned: null, lastLedger: null,
-  completions: [], startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, refreshedAt: 0, referenced: [],
+  completions: [], startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, referenced: [],
   ...over,
 })
 const files = {
-  root: '/p/repo', ledgerPath: null, ledgerText: null, planPath: '/p/repo/docs/superpowers/plans/x.md', planText: '', specPath: null,
-  specText: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false,
+  root: '/p/repo', ledgerPath: null, ledger: null, marker: null, planPath: '/p/repo/docs/superpowers/plans/x.md', plan: null, specPath: null,
+  specTitle: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false, stamps: [],
 }
 const context = (percent: number | null): ContextState => ({
   ring: percent === null ? [] : [{ at: 0, percent, tokens: null, window: 1_000_000 }], compactions: 0, lastCompactionAt: null, lastTone: 'success', breakdown: null,

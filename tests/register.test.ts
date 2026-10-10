@@ -38,6 +38,12 @@ type World = {
   toasts: string[]
   commands: string[]
   lists: () => number
+  /** Files read through `fs.read`, in order. */
+  reads: string[]
+  /** How many times the mod wrote `key`. */
+  writes: (key: Key) => number
+  /** How long, on the mocked clock, each `fs.read` takes to answer. */
+  readDelayMs: { value: number }
   /** The context percent the next `session.usage` answers. */
   percent: { value: number }
   /** When true, `session.usage` is refused. */
@@ -53,11 +59,17 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
   const percent = { value: 38 }
   const denyUsage = { value: false }
   let lists = 0
+  const reads: string[] = []
+  const readDelayMs = { value: 0 }
   const clock = mock.clock(on, { now: NOW })
   const written: Partial<Record<Key, unknown>> = {}
+  const writeCounts: Partial<Record<Key, number>> = {}
   on('state.set', async ($, e, next) => {
     const r = await next(e)
-    if (e.plugin === 'supermod' && (r as any)?.value?.isSet !== false) written[e.key as Key] = e.value
+    if (e.plugin === 'supermod' && (r as any)?.value?.isSet !== false) {
+      written[e.key as Key] = e.value
+      writeCounts[e.key as Key] = (writeCounts[e.key as Key] ?? 0) + 1
+    }
     return r
   })
   on('session.start', () => ({ cwd: R }))
@@ -82,6 +94,8 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
     return { value: undefined }
   })
   on('fs.read', async ($, e) => {
+    reads.push(e.path)
+    if (readDelayMs.value > 0) await clock.sleep(readDelayMs.value)
     try {
       return { value: await fake.read(e.path) }
     } catch {
@@ -117,7 +131,7 @@ function world(on: On, tree: Record<string, FakeNode> = runTree()): World {
       usage: { input_tokens: 5, output_tokens: output, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20, model: e.model },
     }
   })
-  return { get: key => written[key], toasts, commands, lists: () => lists, percent, denyUsage, clock }
+  return { get: key => written[key], toasts, commands, lists: () => lists, reads, writes: key => writeCounts[key] ?? 0, readDelayMs, percent, denyUsage, clock }
 }
 
 const start = ($: any) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: R })
@@ -252,6 +266,8 @@ test('a spec written this session becomes the run before a plan exists', async (
   const w = world(on, { [R + '/.git']: { dir: true }, [SPEC]: { text: '# Englische Ansicht\n', mtimeMs: NOW } })
   const r = await $.tool.call({ tool: 'Write', file_path: SPEC, content: '# Englische Ansicht\n' })
   expect(r.result).toBe('ok')
+  // The refresh runs on the clock shortly after the call, never inside it.
+  await w.clock.advance(2_000)
   const run = w.get('run')
   expect(run.sessionSpec).toBe(SPEC)
   expect(run.referenced).toContain(SPEC)
@@ -262,8 +278,10 @@ test('a spec written this session becomes the run before a plan exists', async (
 test('the newest plan counts only once a tool call referenced it', async ($, on) => {
   const w = world(on, planOnlyTree())
   await complete($)
-  expect(w.get('run').files).toBeNull()
+  // Nothing found: the run is never written, so it stays at its empty start.
+  expect(w.get('run')?.files ?? null).toBeNull()
   await $.tool.call({ tool: 'Bash', command: 'cat docs/superpowers/plans/2026-10-07-englische-ansicht.md' })
+  await w.clock.advance(2_000)
   const run = w.get('run')
   expect(run.referenced).toEqual(['docs/superpowers/plans/2026-10-07-englische-ansicht.md'])
   expect(run.files.planPath).toBe(PLAN)
@@ -337,4 +355,65 @@ test('a failed usage read does not skip the run refresh', async ($, on) => {
   await start($)
   expect(w.commands).toContain('supermod')
   expect(w.get('ui').surfaces).toEqual(['terminal'])
+})
+
+test('a tool call returns before the run refresh it starts has finished', async ($, on) => {
+  const w = world(on, planOnlyTree())
+  w.readDelayMs.value = 5_000
+  let isAnswered = false
+  const call = $.tool.call({ tool: 'Bash', command: 'cat docs/superpowers/plans/2026-10-07-englische-ansicht.md' }).then(r => {
+    isAnswered = true
+    return r
+  })
+  await w.clock.settle()
+  expect(isAnswered).toBe(true)
+  expect((await call).result).toBe('ok')
+  expect(w.get('run').referenced).toEqual(['docs/superpowers/plans/2026-10-07-englische-ansicht.md'])
+  // Two more calls within the delay share the one refresh still to come.
+  await $.tool.call({ tool: 'Read', file_path: PLAN })
+  await $.tool.call({ tool: 'Read', file_path: PLAN })
+  await w.clock.advance(2_000)
+  expect(w.reads).toEqual([PLAN])
+  await w.clock.advance(10_000)
+  expect(w.get('run').files.planPath).toBe(PLAN)
+  expect(w.reads).toEqual([PLAN, SPEC])
+})
+
+test('a refresh that finds the run unchanged reads no file and writes no state', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await $.skill.prompt({ skill: 'superpowers:subagent-driven-development', text: '' })
+  await complete($)
+  const run = w.get('run')
+  expect(run.files.plan.title).toBe('Englische Ansicht Implementation Plan')
+  expect(JSON.stringify(run)).not.toContain('### Task')
+  expect('refreshedAt' in run).toBe(false)
+  const reads = w.reads.length
+  const writes = w.writes('run')
+  const lists = w.lists()
+  await w.clock.advance(30_000)
+  expect(w.lists()).toBeGreaterThan(lists)
+  expect(w.reads.length).toBe(reads)
+  expect(w.writes('run')).toBe(writes)
+  // A turn that completes with nothing new leaves the run as it is too.
+  await complete($)
+  expect(w.reads.length).toBe(reads)
+  expect(w.writes('run')).toBe(writes)
+})
+
+test('[Hide] lasts until the next run starts', async ($, on) => {
+  const NEW_SPEC = R + '/docs/superpowers/specs/2026-10-10-neu-design.md'
+  const w = world(on, { ...planOnlyTree(), [NEW_SPEC]: { text: '# Neu\n', mtimeMs: NOW } })
+  await $.tool.call({ tool: 'Bash', command: 'cat docs/superpowers/plans/2026-10-07-englische-ansicht.md' })
+  await w.clock.advance(2_000)
+  expect(w.get('run').files.planPath).toBe(PLAN)
+  await $.command.run({ command: 'supermod', args: 'hide' })
+  // The same run found again keeps the band hidden.
+  await complete($)
+  expect(w.get('ui').isHidden).toBe(true)
+  // A spec written for the next feature starts a new run.
+  await $.tool.call({ tool: 'Write', file_path: NEW_SPEC, content: '# Neu\n' })
+  await w.clock.advance(2_000)
+  expect(w.get('run').files.specPath).toBe(NEW_SPEC)
+  expect(w.get('ui').isHidden).toBe(false)
 })

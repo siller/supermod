@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { LEDGER_MID, PLAN_NINE } from './fixtures'
+import { LEDGER_MID_STORED, PLAN_NINE_STORED } from './fixtures'
 
 const MIN = 60_000
 const NOW = 1_000 * MIN
@@ -9,8 +9,8 @@ const PLAN = R + '/docs/superpowers/plans/2026-10-07-englische-ansicht.md'
 
 const RUN = {
   files: {
-    root: R, ledgerPath: R + '/.superpowers/sdd/x/progress.md', ledgerText: LEDGER_MID, planPath: PLAN, planText: PLAN_NINE, specPath: null, specText: null,
-    workspaceDir: null, workspaceFiles: [], workspaceExists: true,
+    root: R, ledgerPath: R + '/.superpowers/sdd/x/progress.md', ledger: LEDGER_MID_STORED, marker: null, planPath: PLAN, plan: PLAN_NINE_STORED,
+    specPath: null, specTitle: null, workspaceDir: null, workspaceFiles: [], workspaceExists: true, stamps: [],
   },
   snapshot: {
     title: 'Englische Ansicht Implementation Plan',
@@ -22,7 +22,7 @@ const RUN = {
   },
   skillsSeen: ['superpowers:subagent-driven-development'],
   sessionSpec: null, pinned: null, lastLedger: null, completions: [], startedAt: NOW - 60 * MIN, startedWithCompleted: false,
-  finishingTurnCompleted: false, refreshedAt: NOW, referenced: [],
+  finishingTurnCompleted: false, referenced: [],
 }
 const CONTEXT = { ring: [{ at: NOW, percent: 38, tokens: 380_000, window: 1_000_000 }], compactions: 0, lastCompactionAt: null, lastTone: 'success', breakdown: null }
 

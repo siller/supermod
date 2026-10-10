@@ -1,24 +1,38 @@
 // The state contract of SuperMod: what the event hooks and timers write and
 // the band and pane read. The validator wants it self-contained (no import),
 // so the shapes the pure modules define are written out here again; they are
-// structurally the same types (hooks/scan.ts, progress.ts, usage.ts, eta.ts,
-// i18n.ts), and register.tsx's use of both keeps them in step. Every value is
-// JSON data (the host stores it so): a ledger keeps its tasks as a list, not a Map.
+// structurally the same types (hooks/progress.ts, usage.ts, eta.ts, i18n.ts),
+// and register.tsx's use of both keeps them in step. `RunFiles` and its parts
+// are defined here and used by hooks/scan.ts as they are. Every value is JSON
+// data (the host stores it so): a ledger keeps its tasks as a list, not a Map,
+// and no file's text is kept, only what was parsed from it.
 
 export type Lang = 'en' | 'de'
 
-/** hooks/scan.ts `RunFiles`. */
+/** A file as last read: a refresh re-reads it only when its stat's mtime differs. */
+export type FileStamp = { path: string; mtimeMs: number }
+
+/** hooks/progress.ts `Plan` as JSON: its task titles as a list, every title at most 80 characters. */
+export type StoredPlan = { title: string; specPath: string | null; tasks: { n: number; title: string }[] }
+
+/** The run's files as found, each parsed; a text that could not be read leaves its value null. */
 export type RunFiles = {
+  /** The search root the run was found in. */
   root: string | null
   ledgerPath: string | null
-  ledgerText: string | null
+  ledger: StoredLedger | null
+  /** The plan path the workspace's `plan-path` marker names, as written; null without one. */
+  marker: string | null
   planPath: string | null
-  planText: string | null
+  plan: StoredPlan | null
   specPath: string | null
-  specText: string | null
+  /** The spec's first heading, else its file name's slug; at most 80 characters. */
+  specTitle: string | null
   workspaceDir: string | null
   workspaceFiles: { name: string; mtimeMs: number }[]
   workspaceExists: boolean
+  /** The ledger, marker, plan and spec as read, with the mtime each had. */
+  stamps: FileStamp[]
 }
 
 /** hooks/progress.ts `RunSnapshot`. */
@@ -86,7 +100,6 @@ export type RunState = {
   startedWithCompleted: boolean
   /** A main-loop turn completed after `finishing-a-development-branch` was seen. */
   finishingTurnCompleted: boolean
-  refreshedAt: number
   /** Ledger, plan and spec paths named in this session's tool calls. */
   referenced: string[]
 }

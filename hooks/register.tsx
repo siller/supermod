@@ -7,9 +7,9 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
-import type { AgentsState, ContextState, ModelsState, RunState, StoredBreakdown, UiOptions, UiState } from '../types'
+import type { AgentsState, ContextState, ModelsState, RunFiles, RunState, StoredBreakdown, UiOptions, UiState } from '../types'
 import { bandModel, planBandRow, renderBand } from './band'
-import { applyFiles, DEFAULT_OPTIONS, isFound, newRow, optionsOf, pathsIn, planKey, syncAgents, withSnapshot, ZERO } from './glue'
+import { applyFiles, DEFAULT_OPTIONS, isFound, isNewRun, newRow, optionsOf, pathsIn, planKey, syncAgents, withReferenced, withSnapshot, ZERO } from './glue'
 import { t } from './i18n'
 import { paneModel, planPane, renderPane, statusText } from './pane'
 import { discoverRun, discoverWorktreeRoots, resolveRoots } from './scan'
@@ -21,14 +21,15 @@ import { isBandVisible } from './visibility'
 const USAGE_EVERY_MS = 3_000
 const FILES_EVERY_MS = 30_000
 const BREAKDOWN_EVERY_MS = 30_000
+/** A tool call's run refresh waits this long; calls within it share the one refresh. */
+const TOOL_REFRESH_AFTER_MS = 2_000
 const MAX_AGE_MS = 7 * 86_400_000
-const REFERENCED_CAP = 100
 const FINISHING = 'superpowers:finishing-a-development-branch'
 const SPEC_FILE = /(?:^|\/)docs\/superpowers\/specs\/[^/]+-design\.md$/
 
 const runAtom = atom({ plugin: 'supermod', key: 'run' } as const, {
   files: null, snapshot: null, skillsSeen: [], sessionSpec: null, pinned: null, lastLedger: null, completions: [],
-  startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, refreshedAt: 0, referenced: [],
+  startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, referenced: [],
 } as RunState)
 const contextAtom = atom({ plugin: 'supermod', key: 'context' } as const, { ring: [], compactions: 0, lastCompactionAt: null, lastTone: 'success', breakdown: null } as ContextState)
 const agentsAtom = atom({ plugin: 'supermod', key: 'agents' } as const, { rows: [] } as AgentsState)
@@ -37,6 +38,8 @@ const uiAtom = atom({ plugin: 'supermod', key: 'ui' } as const, { isHidden: fals
 
 /** The running timers; a module reload drops them, the state stays. */
 let timers: { usage: Timer; files: Timer } | null = null
+/** The run refresh a tool call asked for, until it starts. */
+let toolRefresh: Timer | null = null
 
 /** Swallows a failure while observing: the event goes on whatever the mod's bookkeeping did. */
 async function observe(work: () => Promise<unknown>): Promise<void> {
@@ -57,7 +60,11 @@ function fsOf($: EngineInterface): Fs {
   }
 }
 
-/** Finds the current run in the search roots and stores files, snapshot and completions. */
+/**
+ * Finds the current run in the search roots and stores files, snapshot and
+ * completions; files unchanged since the last refresh are not read again, and
+ * nothing is written when nothing changed. A new run ends a `[Hide]`.
+ */
 async function refreshRun($: EngineInterface): Promise<void> {
   const fs = fsOf($)
   const cur = await read($, runAtom)
@@ -66,20 +73,31 @@ async function refreshRun($: EngineInterface): Promise<void> {
   const main = roots[1] ?? roots[0]
   if (main !== undefined) for (const r of await discoverWorktreeRoots(fs, main)) if (!roots.includes(r)) roots.push(r)
   const now = await $.clock.now()
-  const opts = { pinned: cur.pinned, sessionSpec: cur.sessionSpec, now, maxAgeMs: MAX_AGE_MS }
-  let found = await discoverRun(fs, roots, opts)
+  const opts = { pinned: cur.pinned, sessionSpec: cur.sessionSpec, now, maxAgeMs: MAX_AGE_MS, prior: cur.files }
+  let found: RunFiles | null = await discoverRun(fs, roots, opts)
   // The newest-plan route counts only for a plan a tool call named in this session.
   const key = found.planPath === null ? null : planKey(found.planPath)
-  if (cur.pinned === null && found.ledgerPath === null && found.planPath !== null && !cur.referenced.some(p => key !== null && planKey(p) === key)) {
-    found = { ...found, ledgerPath: null, planPath: null, planText: null, specPath: null, specText: null, workspaceExists: false }
-  }
+  if (cur.pinned === null && found.ledgerPath === null && found.planPath !== null && !cur.referenced.some(p => key !== null && planKey(p) === key)) found = null
+  if (found !== null && !isFound(found)) found = null
   // Once the workspace is gone, keep following the run's plan rather than falling back to its spec.
   const prev = cur.files
-  if (prev?.planPath && found.ledgerPath === null && found.planPath === null && (found.specPath === null || found.specPath === prev.specPath)) {
+  const isLost = found === null || (found.ledgerPath === null && found.planPath === null && (found.specPath === null || found.specPath === prev?.specPath))
+  if (prev?.planPath && isLost) {
     const again = await discoverRun(fs, roots, { ...opts, pinned: prev.planPath })
     if (again.planPath === prev.planPath) found = again
   }
-  await update($, runAtom, c => applyFiles(c, isFound(found) ? found : null, now))
+  if (applyFiles(cur, found, now) === cur) return
+  if (isNewRun(cur, found) && (await read($, uiAtom)).isHidden) await update($, uiAtom, u => ({ ...u, isHidden: false }))
+  await update($, runAtom, c => applyFiles(c, found, now))
+}
+
+/** One run refresh shortly after a tool call named a run path, outside the call: the result never waits for it, a burst of calls shares it. */
+function refreshRunSoon($: EngineInterface, o: UiOptions): void {
+  if (toolRefresh !== null) return
+  toolRefresh = $.clock.after(TOOL_REFRESH_AFTER_MS, () => {
+    toolRefresh = null
+    void tick($, o, () => refreshRun($))
+  })
 }
 
 /** Reads the main context; a new reading goes into the ring and may raise one toast. */
@@ -273,15 +291,11 @@ export const register: Register = (on, options) => {
     if (paths.length > 0) {
       const file = input.file_path
       const spec = (e.tool === 'Write' || e.tool === 'Edit') && typeof file === 'string' && SPEC_FILE.test(file) ? file : null
-      await observe(() =>
-        update($, runAtom, c => ({
-          ...c,
-          referenced: [...c.referenced.filter(p => !paths.includes(p)), ...paths].slice(-REFERENCED_CAP),
-          sessionSpec: spec ?? c.sessionSpec,
-        })),
-      )
-      await observe(() => refreshRun($))
-      await observe(() => syncTimers($, o))
+      await observe(async () => {
+        const c = await read($, runAtom)
+        if (withReferenced(c, paths, spec) !== c) await update($, runAtom, r => withReferenced(r, paths, spec))
+      })
+      await observe(async () => refreshRunSoon($, o))
     }
     return r
   })
@@ -297,11 +311,11 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (e.agentId === undefined) {
-      await observe(() =>
-        update($, runAtom, c =>
-          c.skillsSeen.includes(FINISHING) && !c.finishingTurnCompleted ? withSnapshot({ ...c, finishingTurnCompleted: true }) : c,
-        ),
-      )
+      // Written only when it changes: `update` writes whatever its function returns.
+      await observe(async () => {
+        const c = await read($, runAtom)
+        if (c.skillsSeen.includes(FINISHING) && !c.finishingTurnCompleted) await update($, runAtom, r => withSnapshot({ ...r, finishingTurnCompleted: true }))
+      })
     }
     await refreshAll($, o)
     return r

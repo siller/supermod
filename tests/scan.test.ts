@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { discoverRun, discoverWorktreeRoots, isInsideRoots, resolveRoots, searchRoots } from '../hooks/scan'
 import { fakeFs } from './fakefs'
 import type { FakeNode } from './fakefs'
-import { LEDGER_MID, LEDGER_OTHER_PLAN, PLAN_NINE } from './fixtures'
+import { LEDGER_EMPTY, LEDGER_MID, LEDGER_MID_STORED, LEDGER_OTHER_PLAN, PLAN_NINE, PLAN_NINE_STORED } from './fixtures'
 
 const DAY = 86_400_000
 const NOW = 30 * DAY
@@ -67,11 +67,20 @@ test('discoverRun picks the newest ledger and loads plan, spec and workspace fil
   const run = await discoverRun(fake, [R], OPTS)
   expect(run.root).toBe(R)
   expect(run.ledgerPath).toBe(WS + '/progress.md')
-  expect(run.ledgerText).toBe(LEDGER_MID)
+  expect(run.ledger).toEqual(LEDGER_MID_STORED)
+  expect(run.marker).toBe('docs/superpowers/plans/2026-10-07-englische-ansicht.md')
   expect(run.planPath).toBe('/p/repo/docs/superpowers/plans/2026-10-07-englische-ansicht.md')
-  expect(run.planText).toBe(PLAN_NINE)
+  expect(run.plan).toEqual(PLAN_NINE_STORED)
   expect(run.specPath).toBe(SPEC)
-  expect(run.specText).toBe('# Englische Ansicht\n')
+  expect(run.specTitle).toBe('Englische Ansicht')
+  // The state keeps parsed values and each file's mtime, never the text.
+  expect(JSON.stringify(run)).not.toContain('### Task')
+  expect(run.stamps).toEqual([
+    { path: WS + '/progress.md', mtimeMs: NOW - DAY },
+    { path: WS + '/plan-path', mtimeMs: 0 },
+    { path: PLAN, mtimeMs: NOW - 4 * DAY },
+    { path: SPEC, mtimeMs: NOW - 6 * DAY },
+  ])
   expect(run.workspaceDir).toBe(WS)
   expect(run.workspaceExists).toBe(true)
   expect(run.workspaceFiles.map(f => f.name)).toContain('task-3-brief.md')
@@ -101,7 +110,7 @@ test('a symlinked ledger resolving outside the roots is refused', async () => {
   })
   const run = await discoverRun(fake, [R], OPTS)
   expect(run.ledgerPath).toBeNull()
-  expect(run.ledgerText).toBeNull()
+  expect(run.ledger).toBeNull()
   expect(readsOf(fake)).toEqual([])
 })
 
@@ -130,7 +139,7 @@ test('a Spec line naming a file that is not a design spec is refused', async () 
   const run = await discoverRun(fake, [R], OPTS)
   expect(run.planPath).toBe(PLAN)
   expect(run.specPath).toBeNull()
-  expect(run.specText).toBeNull()
+  expect(run.specTitle).toBeNull()
   expect(fake.calls.filter(c => c.path === R + '/.env')).toEqual([])
 })
 
@@ -138,7 +147,8 @@ test('a read failure keeps the ledger null without throwing', async () => {
   const fake = fakeFs({ ...repoTree(), [WS + '/progress.md']: { text: LEDGER_MID, mtimeMs: NOW, fails: ['read'] } })
   const run = await discoverRun(fake, [R], OPTS)
   expect(run.ledgerPath).toBe(WS + '/progress.md')
-  expect(run.ledgerText).toBeNull()
+  expect(run.ledger).toBeNull()
+  expect(run.stamps.map(s => s.path)).not.toContain(WS + '/progress.md')
   expect(run.planPath).toBe(PLAN)
 })
 
@@ -149,8 +159,8 @@ test('stat and list failures resolve to an empty run without throwing', async ()
   })
   const run = await discoverRun(fake, [R], OPTS)
   expect(run).toEqual({
-    root: null, ledgerPath: null, ledgerText: null, planPath: null, planText: null,
-    specPath: null, specText: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false,
+    root: null, ledgerPath: null, ledger: null, marker: null, planPath: null, plan: null,
+    specPath: null, specTitle: null, workspaceDir: null, workspaceFiles: [], workspaceExists: false, stamps: [],
   })
 })
 
@@ -159,7 +169,7 @@ test('a pinned path wins over discovery; session spec is the run before any plan
   const pinned = await discoverRun(fake, [R], { ...OPTS, pinned: OLD_PLAN })
   expect(pinned.planPath).toBe(OLD_PLAN)
   expect(pinned.workspaceDir).toBe(OLD_WS)
-  expect(pinned.ledgerText).toBe(LEDGER_OTHER_PLAN)
+  expect(pinned.ledger?.planPath).toBe('docs/superpowers/plans/2026-09-30-andere-aufgabe.md')
   const byLedger = await discoverRun(fake, [R], { ...OPTS, pinned: OLD_WS + '/progress.md' })
   expect(byLedger.planPath).toBe(OLD_PLAN)
   const byDir = await discoverRun(fake, [R], { ...OPTS, pinned: OLD_WS })
@@ -171,7 +181,7 @@ test('a pinned path wins over discovery; session spec is the run before any plan
   })
   const spec = await discoverRun(noLedgers, [R], { ...OPTS, sessionSpec: SPECS + '/2026-10-10-neu-design.md' })
   expect(spec.specPath).toBe(SPECS + '/2026-10-10-neu-design.md')
-  expect(spec.specText).toBe('# Neu\n')
+  expect(spec.specTitle).toBe('Neu')
   expect(spec.planPath).toBeNull()
   const plan = await discoverRun(noLedgers, [R], OPTS)
   expect(plan.planPath).toBe(PLAN)
@@ -213,7 +223,7 @@ test('a run in a worktree root is found and its plan read there', async () => {
   const run = await discoverRun(fake, [W, R], OPTS)
   expect(run.root).toBe(W)
   expect(run.planPath).toBe(W + '/docs/superpowers/plans/2026-10-07-englische-ansicht.md')
-  expect(run.specText).toBe('# E\n')
+  expect(run.specTitle).toBe('E')
 })
 
 test('a plan over 1 MiB keeps only its headings and the Spec line', async () => {
@@ -221,7 +231,7 @@ test('a plan over 1 MiB keeps only its headings and the Spec line', async () => 
   const big = '# Big\n\n**Spec:** docs/superpowers/specs/2026-10-07-englische-ansicht-design.md\n' + filler + '### Task 1: A\n```\n## Task 9: not a task\n```\n'
   const fake = fakeFs({ ...repoTree(), [PLAN]: { text: big, mtimeMs: NOW } })
   const run = await discoverRun(fake, [R], OPTS)
-  expect(run.planText).toBe('# Big\n**Spec:** docs/superpowers/specs/2026-10-07-englische-ansicht-design.md\n### Task 1: A\n```\n## Task 9: not a task\n```')
+  expect(run.plan).toEqual({ title: 'Big', specPath: 'docs/superpowers/specs/2026-10-07-englische-ansicht-design.md', tasks: [{ n: 1, title: 'A' }] })
   expect(run.specPath).toBe(SPEC)
 })
 
@@ -258,7 +268,7 @@ test('a misbehaving Fs never makes discoverRun throw', async () => {
   }
   const run = await discoverRun(odd, [R], OPTS)
   expect(run.ledgerPath).toBe(SDD + '/w/progress.md')
-  expect(run.ledgerText).toBeNull()
+  expect(run.ledger).toBeNull()
   expect(await discoverWorktreeRoots(odd, R)).toEqual([R + '/.claude/worktrees/w', R + '/.worktrees/w', R + '/worktrees/w'])
 })
 
@@ -290,7 +300,7 @@ test('a Spec link relative to the plan file is resolved from the plan folder', a
   const fake = fakeFs({ ...repoTree(), [PLAN]: { text: '# P\n**Spec:** [spec](../specs/2026-10-07-englische-ansicht-design.md)\n', mtimeMs: NOW } })
   const run = await discoverRun(fake, [R], OPTS)
   expect(run.specPath).toBe(SPEC)
-  expect(run.specText).toBe('# Englische Ansicht\n')
+  expect(run.specTitle).toBe('Englische Ansicht')
 })
 
 test('resolveRoots resolves a symlinked project root', async () => {
@@ -311,4 +321,42 @@ test('resolveRoots adds the main checkout only for a linked worktree whose main 
   expect(repo.calls.every(c => c.op === 'stat')).toBe(true)
   expect(await resolveRoots(fakeFs({ '/p/repo/.worktrees/feat/.git': 'gitdir: x' }), '/p/repo/.worktrees/feat')).toEqual(['/p/repo/.worktrees/feat'])
   expect(await resolveRoots(fakeFs({ '/p/repo/.git': 'gitdir: y' }), '/p/repo')).toEqual(['/p/repo'])
+})
+
+test('a second discovery with unchanged mtimes stats every file but reads none', async () => {
+  const fake = fakeFs(repoTree())
+  const first = await discoverRun(fake, [R], OPTS)
+  fake.calls.length = 0
+  const again = await discoverRun(fake, [R], { ...OPTS, prior: first })
+  expect(again).toEqual(first)
+  expect(readsOf(fake)).toEqual([])
+  const stats = fake.calls.filter(c => c.op === 'stat').map(c => c.path)
+  for (const path of [WS + '/progress.md', WS + '/plan-path', PLAN, SPEC]) expect(stats).toContain(path)
+})
+
+test('a changed mtime re-reads that file only', async () => {
+  const first = await discoverRun(fakeFs(repoTree()), [R], OPTS)
+  const fake = fakeFs({ ...repoTree(), [WS + '/progress.md']: { text: LEDGER_EMPTY, mtimeMs: NOW - DAY + 1 } })
+  const again = await discoverRun(fake, [R], { ...OPTS, prior: first })
+  expect(readsOf(fake)).toEqual([WS + '/progress.md'])
+  expect(again.ledger).toEqual({ planPath: 'docs/superpowers/plans/2026-10-07-englische-ansicht.md', tasks: [] })
+  expect(again.plan).toEqual(first.plan)
+  expect(again.specTitle).toBe(first.specTitle)
+  expect(again.stamps[0]).toEqual({ path: WS + '/progress.md', mtimeMs: NOW - DAY + 1 })
+})
+
+test('a prior without stamps (state written by an older version) reads every file', async () => {
+  const first = await discoverRun(fakeFs(repoTree()), [R], OPTS)
+  const fake = fakeFs(repoTree())
+  const legacy = { ...first, stamps: undefined } as unknown as typeof first
+  expect(await discoverRun(fake, [R], { ...OPTS, prior: legacy })).toEqual(first)
+  expect(readsOf(fake)).toEqual([PLAN, SPEC, WS + '/plan-path', WS + '/progress.md'].sort())
+})
+
+test('plan and task titles are kept to 80 characters', async () => {
+  const long = 'L'.repeat(120)
+  const fake = fakeFs({ ...repoTree(), [PLAN]: { text: `# ${long}\n### Task 1: ${long}\n`, mtimeMs: NOW } })
+  const run = await discoverRun(fake, [R], OPTS)
+  expect(run.plan?.title).toBe('L'.repeat(79) + '…')
+  expect(run.plan?.tasks).toEqual([{ n: 1, title: 'L'.repeat(79) + '…' }])
 })

@@ -1,16 +1,16 @@
 import { expect, test } from 'claude-code/testing'
-import { applyFiles, newRow, pathsIn, snapshotOf, syncAgents } from '../hooks/glue'
+import { applyFiles, newRow, pathsIn, snapshotOf, syncAgents, withReferenced } from '../hooks/glue'
 import type { RunFiles, RunState } from '../types'
-import { LEDGER_MID, PLAN_NINE } from './fixtures'
+import { LEDGER_MID_STORED, PLAN_NINE_STORED } from './fixtures'
 
 const PLAN = '/p/repo/docs/superpowers/plans/2026-10-07-englische-ansicht.md'
 const EMPTY_RUN: RunState = {
   files: null, snapshot: null, skillsSeen: [], sessionSpec: null, pinned: null, lastLedger: null, completions: [],
-  startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, refreshedAt: 0, referenced: [],
+  startedAt: null, startedWithCompleted: false, finishingTurnCompleted: false, referenced: [],
 }
 const FILES: RunFiles = {
-  root: '/p/repo', ledgerPath: '/p/repo/.superpowers/sdd/x/progress.md', ledgerText: LEDGER_MID, planPath: PLAN, planText: PLAN_NINE,
-  specPath: null, specText: null, workspaceDir: '/p/repo/.superpowers/sdd/x', workspaceFiles: [], workspaceExists: true,
+  root: '/p/repo', ledgerPath: '/p/repo/.superpowers/sdd/x/progress.md', ledger: LEDGER_MID_STORED, marker: null, planPath: PLAN, plan: PLAN_NINE_STORED,
+  specPath: null, specTitle: null, workspaceDir: '/p/repo/.superpowers/sdd/x', workspaceFiles: [], workspaceExists: true, stamps: [],
 }
 
 test('pathsIn finds run paths in file paths, commands and prompts, trimmed', async () => {
@@ -47,12 +47,48 @@ test('applyFiles resets the clock for a new run and records completions once', a
   expect(first.startedAt).toBe(100)
   expect(first.startedWithCompleted).toBe(true)
   expect(first.completions).toEqual([{ n: 1, at: 100 }, { n: 2, at: 100 }])
-  const again = applyFiles(first, FILES, 200)
-  expect(again.startedAt).toBe(100)
-  expect(again.completions).toEqual(first.completions)
-  // Nothing found keeps the last files.
-  expect(applyFiles(first, null, 300).files).toBe(FILES)
-  const other = applyFiles(first, { ...FILES, ledgerPath: null, ledgerText: null, planPath: '/p/repo/docs/superpowers/plans/other.md' }, 400)
+  expect(first.lastLedger).toEqual(LEDGER_MID_STORED)
+  // The same run found again, or nothing found (the last files stay), changes nothing: the state itself comes back.
+  expect(applyFiles(first, { ...FILES, stamps: [] }, 200)).toBe(first)
+  expect(applyFiles(first, null, 300)).toBe(first)
+  // A run known only by its workspace is the same run when found again.
+  const bare = { ...FILES, ledgerPath: null, ledger: null, planPath: null, plan: null }
+  const ws = applyFiles(EMPTY_RUN, bare, 100)
+  expect(applyFiles(ws, bare, 500)).toBe(ws)
+  const other = applyFiles(first, { ...FILES, ledgerPath: null, ledger: null, workspaceDir: null, planPath: '/p/repo/docs/superpowers/plans/other.md' }, 400)
   expect(other.startedAt).toBe(400)
   expect(other.completions).toEqual([])
+})
+
+const elapsedMs = (fn: () => void): number => {
+  const now = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now()
+  const t0 = now()
+  fn()
+  return now() - t0
+}
+
+test('pathsIn scans 100k-character inputs without a run path in well under 50 ms', async () => {
+  const plain = 'x'.repeat(100_000)
+  const nearMiss = 'a'.repeat(99_000) + 'superpowers/plans/' + '.'.repeat(500) + 'z'
+  let found: string[] = ['unset']
+  const ms = elapsedMs(() => {
+    found = pathsIn({ file_path: plain, path: nearMiss, command: plain, prompt: nearMiss })
+  })
+  expect(found).toEqual([])
+  expect(ms).toBeLessThan(50)
+})
+
+test('pathsIn keeps a path after `=` and drops one longer than 512 characters', async () => {
+  const long = 'docs/superpowers/plans/' + 'p'.repeat(600) + '.md'
+  expect(pathsIn({ command: `cat ${long} PLAN=./docs/superpowers/plans/ok.md, x=y` })).toEqual(['docs/superpowers/plans/ok.md'])
+})
+
+test('withReferenced moves named paths to the end, keeps the last 100, and changes nothing when nothing is new', async () => {
+  const c = { ...EMPTY_RUN, referenced: ['a', 'b'] }
+  expect(withReferenced(c, ['b'], null)).toBe(c)
+  expect(withReferenced(c, ['a'], null).referenced).toEqual(['b', 'a'])
+  expect(withReferenced(c, ['b'], 'docs/superpowers/specs/x-design.md').sessionSpec).toBe('docs/superpowers/specs/x-design.md')
+  const many = withReferenced(c, Array.from({ length: 120 }, (_, i) => `p${i}`), null).referenced
+  expect(many.length).toBe(100)
+  expect(many[99]).toBe('p119')
 })

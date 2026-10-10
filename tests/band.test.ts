@@ -31,8 +31,8 @@ const SNAPSHOT: RunSnapshot = {
 /** A run first seen at T0 with no task complete; tasks 1 and 2 completed 20 minutes apart. */
 const RUN: RunState = {
   files: {
-    root: '/p/repo', ledgerPath: null, ledgerText: null, planPath: PLAN, planText: '', specPath: null, specText: null,
-    workspaceDir: null, workspaceFiles: [], workspaceExists: true,
+    root: '/p/repo', ledgerPath: null, ledger: null, marker: null, planPath: PLAN, plan: null, specPath: null, specTitle: null,
+    workspaceDir: null, workspaceFiles: [], workspaceExists: true, stamps: [],
   },
   snapshot: SNAPSHOT,
   skillsSeen: ['superpowers:subagent-driven-development'],
@@ -43,7 +43,6 @@ const RUN: RunState = {
   startedAt: T0,
   startedWithCompleted: false,
   finishingTurnCompleted: false,
-  refreshedAt: NOW,
   referenced: [],
 }
 const NO_RUN: RunState = { ...RUN, files: null, snapshot: null, skillsSeen: [], completions: [], startedAt: null }
