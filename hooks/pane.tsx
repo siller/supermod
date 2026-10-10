@@ -138,7 +138,7 @@ export function paneModel(s: PaneState, o: UiOptions, now: number): PaneModel {
   let cost: PaneModel['cost'] = null
   if (o.showCost) {
     const entries = Object.entries(s.models.totals)
-    const sum = entries.reduce((a, [, u]) => ({ input: a.input + u.input, cacheRead: a.cacheRead + u.cacheRead, cacheWrite: a.cacheWrite + u.cacheWrite }), ZERO_USAGE)
+    const sum = entries.reduce((a, [, u]) => ({ input: a.input + u.input, output: a.output + u.output, cacheRead: a.cacheRead + u.cacheRead, cacheWrite: a.cacheWrite + u.cacheWrite }), ZERO_USAGE)
     const seen = sum.input + sum.cacheRead + sum.cacheWrite
     cost = {
       usd: s.models.engineUsd ?? estimateUsd(s.models.totals),
