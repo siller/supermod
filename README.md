@@ -4,15 +4,21 @@ SuperMod is a Claude Code mod that shows, inside the session, how far a Superpow
 
 ## What it shows
 
-The band above the prompt is always one line:
+The band above the prompt is always one line. On a wide terminal it reads:
 
 ```
-SuperMod  Englische Ansicht  ████████░░░░░░░░ 44%  Task 5/9 · implementer  ctx ████░░░░░░ 38%  agents 2  ~25–40 min  [Details] [Hide]
+englische-ansicht  █████░░░░░░░ 44%  Task 5/9 · Implementer  ctx ███░░░░░ 38%  Agents 2  ~25–40 min [ Details ] [ Hide ]
 ```
 
-From left to right: the plan title, the overall progress bar and percent, the current task with its station, the context bar and percent, the number of running agents, the remaining-time range, and two buttons. The context figure is green below the warning threshold, yellow from it and red from the critical threshold. A crossing upward raises one toast for the person only; nothing reaches the model. With fewer columns the band drops, in this order, the time range, the agent count, the task station and the plan title. No band row is wider than the terminal.
+and at 80 columns:
 
-The band shows while a Superpowers run is active in the session, or while the context is at or above the warning threshold. Otherwise it stays out of the way. `[Hide]` hides it until `/supermod show` is run.
+```
+englische-ansicht  ███░░░ 44%  Task 5/9  ctx ██░░░░ 38% [ Details ] [ Hide ]
+```
+
+From left to right: the run's name (the plan's file name without its date, or the spec's title before a plan exists), the overall progress bar and percent, the current task with its station, the context bar and percent, the number of running agents, the remaining-time range, and two buttons. With no run, when the band shows only for the context fill, the row starts with `SuperMod` instead. The context figure is green below the warning threshold, yellow from it and red from the critical threshold. A crossing upward raises one toast for the person only; nothing reaches the model. With fewer columns the bars shrink first, then the band drops, in this order, the time range, the agent count, the task station and the run's name. No band row is wider than the terminal.
+
+The band shows while a Superpowers run is active in the session, or while the context is at or above the warning threshold. Otherwise it stays out of the way. `[Hide]` hides it until the next run starts or `/supermod show` is run.
 
 The pane (`/supermod`, or `[Details]`) has these sections:
 
@@ -50,7 +56,7 @@ Where nothing is drawn the hooks still run, and `/supermod status` prints the ba
 | Command | Effect |
 | --- | --- |
 | `/supermod` | Opens the pane. |
-| `/supermod hide` | Hides the band until `/supermod show`. |
+| `/supermod hide` | Hides the band until the next run starts or `/supermod show`. |
 | `/supermod show` | Shows the band again. |
 | `/supermod status` | Replies with the band's content as text, on every surface. |
 | `/supermod use <plan-or-ledger-path>` | Follows that run instead of the newest one; a relative path is resolved against the session's project root. |
@@ -77,14 +83,20 @@ SuperMod reads only these files, all inside the repository of the session (its p
 - `.superpowers/sdd/*/progress.md`
 - `.superpowers/sdd/*/plan-path`
 
-It lists the directories that hold them, the file names inside each `.superpowers/sdd/<plan>/` workspace (brief, report and diff files are never opened, only their names and times are used), and the three worktree folders. It stats `.git` to tell a main checkout from a linked worktree. A path whose real location leaves those roots, such as a symlink out of the repository, is refused.
+It lists the directories that hold them, the file names inside each `.superpowers/sdd/<plan>/` workspace (brief, report and diff files are never opened, only their names and times are used), and the three worktree folders. It stats `.git` to tell a main checkout from a linked worktree. A path whose real location leaves those roots, such as a symlink out of the repository, is refused. Every file is stat'ed before it is read, and one whose modification time has not changed since it was last read is not read again; the mod's state keeps only what it parsed from a file (titles of at most 80 characters, task numbers, ledger stations), never the file's text.
 
-`claude plugin validate --strict .` lists exactly these hooks and calls for the mod:
+To learn which run the session works on, the `tool.call` hook looks at each tool call's `file_path`, `path`, `command` and `prompt` inputs for paths of the shapes above. It keeps those paths (the last 100, each at most 512 characters) in its state, refreshes the run shortly after the call without holding up the tool's result, and never runs or opens anything a tool input names. The tool call itself passes on unchanged.
+
+Paths are handled as POSIX paths. On Windows SuperMod finds no run; the context fill, the agents and the cost still work.
+
+`claude plugin validate --strict .` reports these hooks and calls for the mod:
 
 ```
 ./register.tsx hooks: session.start, command.run{command=supermod}, ui.render{component=Pane, requestId=supermod}, ui.render{component=AbovePrompt}, skill.prompt, tool.call, turn.step, turn.complete, agent.spawn, session.compact
-./register.tsx calls: $.agent.list (via refreshUsage), $.clock.every (via startTimers), $.clock.now, $.command.register, $.fs.list (via fsOf), $.fs.read (via fsOf), $.fs.stat (via fsOf), $.session.root, $.session.surfaces, $.session.usage (via refreshBreakdown, refreshContext), $.state.get, $.state.set, $.ui.open, $.ui.panes (via refreshUsage), $.ui.resolve, $.ui.toast (via refreshContext)
+./register.tsx calls: $.agent.list (via refreshUsage), $.clock.after (via refreshRunSoon), $.clock.every (via startTimers), $.clock.now, $.command.register, $.fs.list (via fsOf), $.fs.read (via fsOf), $.fs.stat (via fsOf), $.session.root, $.session.surfaces, $.session.usage (via refreshBreakdown, refreshContext), $.state.get, $.state.set, $.ui.open, $.ui.panes (via refreshUsage), $.ui.resolve, $.ui.toast (via refreshContext)
 ```
+
+The validator prints a few more lines for the mod: the state it declares, reads and writes (`supermod.run`, `supermod.context`, `supermod.agents`, `supermod.models`, `supermod.ui`), that it answers its own command `command.run{command=supermod}`, and `gating hook without .catch` for `tool.call`, `agent.spawn` and `session.compact`. Those three hooks only observe: each passes its event on unchanged, and should one of them fail, the engine skips it and carries on with the event as if SuperMod were not installed, so they need no `.catch`.
 
 Compare them with your own run. SuperMod never writes files, starts processes, reads environment variables or settings, or uses the network. `scripts/check-calls.sh` fails the CI build if the validator lists any call outside the allow list.
 

@@ -122,7 +122,7 @@ Which run: pinned path first; else the ledger with the newest modification time 
 
 Search roots, all inside one repository: the session's project root (`$.session.root()`); when that root is itself a worktree (its path contains `/.claude/worktrees/<name>`, `/.worktrees/<name>` or `/worktrees/<name>`), also the main checkout above that segment; and under the main checkout the worktree folders `.claude/worktrees/*`, `.worktrees/*`, `worktrees/*`. In each root SuperMod looks only at `.superpowers/sdd/*/`, `docs/superpowers/plans/` and `docs/superpowers/specs/`. It never lists a parent of the repository or any sibling directory.
 
-Refresh: ledger, workspace listing and plan are re-read after each `turn.complete`, after each `tool.call` whose input mentions a ledger, workspace or plan path, and on a 30-second timer while the band or the pane is visible. Stat before read; unchanged mtime skips the read.
+Refresh: ledger, workspace listing and plan are re-read after each `turn.complete`, after each `tool.call` whose input mentions a ledger, workspace or plan path (shortly after the call and outside it, so the tool's result never waits; calls within two seconds share one refresh), and on a 30-second timer while the band or the pane is visible. Stat before read; unchanged mtime skips the read. The state keeps what was parsed from each file and its mtime, never the file's text.
 
 ### 5.2 Context window
 
@@ -164,7 +164,7 @@ supermod/
 
 Hooks: `session.start` (register command, start timers), `command.run{supermod}`, `skill.prompt` (observe superpowers skills, pass through), `tool.call` (observe paths in inputs, including specs written this session, pass through), `turn.step` (streaming pass-through, read result usage), `turn.complete` (refresh), `agent.spawn` (observe), `session.compact` (observe), `ui.render{AbovePrompt}`, `ui.render{Pane, requestId=supermod}`. Every observing hook passes the event on unchanged; none answers for itself except `command.run{supermod}`.
 
-State lives in `$.state` under the contract, never in module variables, so hot reloads and engine restarts keep the snapshot. Rendering reads state only; writes happen in event hooks and timers. Timers run only while something is visible; the 30-second file refresh stops when the band yields and the pane is closed.
+State lives in `$.state` under the contract, never in module variables, so a hot reload of the mod and a compaction of the conversation keep the snapshot. It lasts for the session only: nothing is kept across sessions, since `$.store` is forbidden (§7). Rendering reads state only; writes happen in event hooks and timers. Timers run only while something is visible; the 30-second file refresh stops when the band yields and the pane is closed.
 
 Width handling: every row is built from a column plan against `e.props.bodyColumns`; no row may exceed it (a wrapped band row would push the prompt).
 

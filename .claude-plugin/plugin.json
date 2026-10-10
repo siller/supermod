@@ -34,13 +34,13 @@
     "showCost": {
       "type": "boolean",
       "title": "Show cost",
-      "description": "Show the cost of the session next to the context fill.",
+      "description": "Show the tokens and cost section of the SuperMod pane.",
       "default": true
     },
     "reviewMinutes": {
       "type": "number",
       "title": "Review minutes",
-      "description": "Minutes after which a running review is flagged as slow; 0 turns the flag off.",
+      "description": "Minutes of review allowance added to the remaining-time estimate.",
       "default": 10,
       "min": 0,
       "max": 240
