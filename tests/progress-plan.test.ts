@@ -45,6 +45,11 @@ test('the spec path is unwrapped from brackets and backticks', async () => {
   expect(parsePlan('**Spec:** docs/s.md (draft)\n', 'x.md').specPath).toBe('docs/s.md')
 })
 
+test('a Markdown link in the spec line yields its target path', async () => {
+  expect(parsePlan('**Spec:** [x](docs/s.md)\n', 'x.md').specPath).toBe('docs/s.md')
+  expect(parsePlan('**Spec:** [the design spec](docs/s.md) (draft)\n', 'x.md').specPath).toBe('docs/s.md')
+})
+
 test('an empty plan has no tasks and falls back to the slug', async () => {
   const p = parsePlan('', '2026-10-01-leer.md')
   expect(p.taskCount).toBe(0)

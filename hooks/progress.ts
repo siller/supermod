@@ -29,7 +29,8 @@ export function parseLedger(text: string): Ledger {
 export type Plan = { title: string; specPath: string | null; taskCount: number; taskTitles: Map<number, string> }
 
 const PLAN_TASK = /^#{2,3} Task (\d+)(?::\s*(.*))?$/
-const PLAN_SPEC = /^\*\*Spec:\*\*\s*(\S+)/
+const PLAN_SPEC = /^\*\*Spec:\*\*\s*(\S.*)$/
+const SPEC_LINK = /^\[[^\]]*\]\(([^)\s]+)\)/
 const FENCE = /^\s*```/
 
 /** The lines outside fenced code blocks. */
@@ -53,6 +54,13 @@ export function slugFromFileName(name: string): string {
   return name.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '').replace(/-design$/, '')
 }
 
+/** The path in a Spec line: `[text](path)` gives the path, otherwise the first word minus `[]` or backticks. */
+function specPathFrom(rest: string): string {
+  const link = SPEC_LINK.exec(rest)
+  if (link) return link[1]
+  return rest.split(/\s/)[0].replace(/^[[`]+|[\]`]+$/g, '')
+}
+
 /** Reads title, spec path and the numbered task headings from a plan. */
 export function parsePlan(text: string, fileName: string): Plan {
   const lines = proseLines(text)
@@ -62,7 +70,7 @@ export function parsePlan(text: string, fileName: string): Plan {
     const task = PLAN_TASK.exec(line)
     if (task) taskTitles.set(Number(task[1]), (task[2] ?? '').trim())
     const spec = PLAN_SPEC.exec(line)
-    if (spec && specPath === null) specPath = spec[1].replace(/^[[`]+|[\]`]+$/g, '')
+    if (spec && specPath === null) specPath = specPathFrom(spec[1])
   }
   return { title: firstH1(lines) ?? slugFromFileName(fileName), specPath, taskCount: taskTitles.size, taskTitles }
 }
