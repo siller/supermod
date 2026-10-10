@@ -1,6 +1,6 @@
 {
   "name": "supermod",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shows Superpowers progress, context fill and running agents inside Claude Code.",
   "author": { "name": "Mark Siller", "url": "https://github.com/siller" },
   "license": "MIT",

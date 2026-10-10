@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1 – 2026-10-10
+
 - `/supermod status` names the context percentage and the agent count even when no run is detected.
 
 ## 0.1.0 – 2026-10-10
