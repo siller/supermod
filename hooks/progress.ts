@@ -98,6 +98,8 @@ export type RunEvidence = {
   plan: Plan | null
   finishingTurnCompleted: boolean
   lastLedger: Ledger | null
+  /** Title of the spec written in this session; names the run until a plan takes over. */
+  specTitle?: string
 }
 export type RunSnapshot = {
   title: string
@@ -173,5 +175,5 @@ export function computeRun(ev: RunEvidence): RunSnapshot {
 
   const steps: StepState[] = STEP_ORDER.map(id => (id === 'tasks' ? { id, status: raw[id], done: completed, total } : { id, status: raw[id] }))
   const currentTask = currentN === null ? null : { n: currentN, title: ev.plan?.taskTitles.get(currentN) ?? '', station: stationNow(currentN) }
-  return { title: ev.plan?.title ?? '', percent: Math.round(percent), steps, currentTask, completed, total }
+  return { title: ev.plan?.title ?? ev.specTitle ?? '', percent: Math.round(percent), steps, currentTask, completed, total }
 }

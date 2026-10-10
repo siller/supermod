@@ -88,3 +88,11 @@ test('writing-plans seen without a ledger makes plan active and earlier steps do
   expect(snap.steps.map(s => s.status)).toEqual(['done', 'done', 'active', 'pending', 'pending', 'pending'])
   expect(snap.percent).toBe(20)
 })
+
+test('before a plan exists the spec title names the run', async () => {
+  const withTitle = computeRun({ ...EMPTY_EVIDENCE, specExists: true, specTitle: 'Englische Ansicht' })
+  expect(withTitle.title).toBe('Englische Ansicht')
+  expect(withTitle.steps.find(s => s.id === 'spec')!.status).toBe('done')
+  expect(computeRun({ ...EMPTY_EVIDENCE, specExists: true }).title).toBe('')
+  expect(computeRun({ ...evidenceWith(plan9, EMPTY_LEDGER, []), specTitle: 'Other' }).title).toBe('Englische Ansicht Implementation Plan')
+})
