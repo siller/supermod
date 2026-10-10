@@ -21,3 +21,53 @@ export function parseLedger(text: string): Ledger {
   }
   return { planPath: header ? header[1].trim() : null, tasks }
 }
+
+// ── Plan and spec ─────────────────────────────────────────────────────────
+// Parsers for Superpowers 7.0.0 plan and spec files. Lines inside fenced code
+// blocks are never headings, so example snippets in a plan do not count.
+
+export type Plan = { title: string; specPath: string | null; taskCount: number; taskTitles: Map<number, string> }
+
+const PLAN_TASK = /^#{2,3} Task (\d+)(?::\s*(.*))?$/
+const PLAN_SPEC = /^\*\*Spec:\*\*\s*(\S+)/
+const FENCE = /^\s*```/
+
+/** The lines outside fenced code blocks. */
+function proseLines(text: string): string[] {
+  const out: string[] = []
+  let fenced = false
+  for (const line of text.split(/\r?\n/)) {
+    if (FENCE.test(line)) fenced = !fenced
+    else if (!fenced) out.push(line)
+  }
+  return out
+}
+
+function firstH1(lines: string[]): string | null {
+  const line = lines.find(l => l.startsWith('# '))
+  return line === undefined ? null : line.slice(2).trim()
+}
+
+/** `2026-10-07-englische-ansicht-design.md` → `englische-ansicht`. */
+export function slugFromFileName(name: string): string {
+  return name.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '').replace(/-design$/, '')
+}
+
+/** Reads title, spec path and the numbered task headings from a plan. */
+export function parsePlan(text: string, fileName: string): Plan {
+  const lines = proseLines(text)
+  const taskTitles = new Map<number, string>()
+  let specPath: string | null = null
+  for (const line of lines) {
+    const task = PLAN_TASK.exec(line)
+    if (task) taskTitles.set(Number(task[1]), (task[2] ?? '').trim())
+    const spec = PLAN_SPEC.exec(line)
+    if (spec && specPath === null) specPath = spec[1].replace(/^[[`]+|[\]`]+$/g, '')
+  }
+  return { title: firstH1(lines) ?? slugFromFileName(fileName), specPath, taskCount: taskTitles.size, taskTitles }
+}
+
+/** The spec's first heading, or the slug of its file name. */
+export function specTitle(text: string, fileName: string): string {
+  return firstH1(proseLines(text)) ?? slugFromFileName(fileName)
+}
