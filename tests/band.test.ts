@@ -194,6 +194,23 @@ test('the row drops time range, agents, station, title in that order', async () 
   expect(cut.at(-1)?.text.endsWith('…')).toBe(true)
 })
 
+const barCells = (n: number) => planBandRow(FULL, n).segments.filter(s => /^ *[█░]+$/.test(s.text)).map(s => s.text.trim().length)
+
+test('the bars shrink before the time range is dropped', async () => {
+  // Wide bars where the whole row fits with them.
+  expect(barCells(120)).toEqual([12, 8])
+  // At 105 the 12/8 row is too wide but the 6/6 row fits: the time range stays.
+  const at105 = planBandRow(FULL, 105).segments.map(s => s.text).join('')
+  expect(barCells(105)).toEqual([6, 6])
+  expect(at105).toContain('~105–225 min')
+  expect(at105.length + buttonCells('en')).toBeLessThanOrEqual(105)
+  // At 100 even the 6/6 row is too wide: narrow bars and the time range dropped.
+  const at100 = planBandRow(FULL, 100).segments.map(s => s.text).join('')
+  expect(barCells(100)).toEqual([6, 6])
+  expect(at100).not.toContain('min')
+  expect(at100).toContain('Agents')
+})
+
 test('context tone colours the context segment', async ($, on) => {
   const w = world(on, { run: RUN, agents: AGENTS })
   for (const [percent, color] of [[72, 'warning'], [90, 'error']] as const) {

@@ -34,8 +34,6 @@ const MINUTE_MS = 60_000
 const SEP = '  '
 /** The title is truncated down to this many cells before it is dropped. */
 const TITLE_MIN = 8
-/** From this width the bars are 12 (progress) and 8 (context) cells, below it 6 each. */
-const WIDE = 100
 const LIVE = new Set(['running', 'pending'])
 /** What goes first when the row is too wide (spec §4.1). */
 const DROPS = ['eta', 'agents', 'station', 'title'] as const
@@ -126,11 +124,16 @@ function clip(segments: Segment[], budget: number): Segment[] {
   return out
 }
 
-/** The band's row for `columns` cells: drops time range, agents, station, title in that order until it fits beside the buttons. */
+/**
+ * The band's row for `columns` cells beside the buttons: the full row with
+ * 12/8-cell bars, else with 6/6-cell bars, then dropping time range, agents,
+ * station, title in that order until it fits; whatever is left is cut.
+ */
 export function planBandRow(m: BandModel, columns: number): BandRow {
   const budget = columns - buttonCells(m.lang)
-  let groups = groupsOf(m, columns >= WIDE)
   const fits = (gs: Group[]) => widthOf(gs, Math.min(TITLE_MIN, titleOf(gs).length)) <= budget
+  const wide = groupsOf(m, true)
+  let groups = fits(wide) ? wide : groupsOf(m, false)
   for (const id of DROPS) {
     if (fits(groups)) break
     groups = groups.filter(g => g.id !== id)
