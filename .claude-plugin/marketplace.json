@@ -1,0 +1,8 @@
+{
+  "name": "supermod",
+  "description": "Claude Code mod that shows Superpowers progress, context fill and running agents.",
+  "owner": { "name": "Mark Siller", "url": "https://github.com/siller" },
+  "plugins": [
+    { "name": "supermod", "source": "./", "description": "Shows Superpowers progress, context fill and running agents inside Claude Code." }
+  ]
+}

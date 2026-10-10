@@ -1,0 +1,49 @@
+{
+  "name": "supermod",
+  "version": "0.1.0",
+  "description": "Shows Superpowers progress, context fill and running agents inside Claude Code.",
+  "author": { "name": "Mark Siller", "url": "https://github.com/siller" },
+  "license": "MIT",
+  "repository": "https://github.com/siller/supermod",
+  "keywords": ["mod", "superpowers", "progress", "context"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts SuperMod shows.",
+      "options": ["en", "de"],
+      "default": "en"
+    },
+    "warnPercent": {
+      "type": "number",
+      "title": "Warning at percent",
+      "description": "Context fill in percent at which SuperMod shows a warning.",
+      "default": 70,
+      "min": 1,
+      "max": 99
+    },
+    "criticalPercent": {
+      "type": "number",
+      "title": "Critical at percent",
+      "description": "Context fill in percent at which SuperMod shows a critical alert.",
+      "default": 85,
+      "min": 1,
+      "max": 100
+    },
+    "showCost": {
+      "type": "boolean",
+      "title": "Show cost",
+      "description": "Show the cost of the session next to the context fill.",
+      "default": true
+    },
+    "reviewMinutes": {
+      "type": "number",
+      "title": "Review minutes",
+      "description": "Minutes after which a running review is flagged as slow; 0 turns the flag off.",
+      "default": 10,
+      "min": 0,
+      "max": 240
+    }
+  }
+}

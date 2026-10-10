@@ -1,0 +1,26 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate the plugin
+        run: claude plugin validate --strict .
+      - name: Check the call allow list
+        run: bash scripts/check-calls.sh .
+      # `claude plugin test` needs no sign-in locally, but this has not been
+      # verified in CI yet, so a failure here does not block the job. Task 12 revisits it.
+      - name: Run the plugin tests
+        run: claude plugin test
+        continue-on-error: true
