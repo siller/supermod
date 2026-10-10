@@ -8,6 +8,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer, TurnUsage } from 'claude-code'
 import type { AgentsState, ContextState, ModelsState, RunState, StoredLedger, UiOptions, UiState } from '../types'
+import { bandModel, planBandRow, renderBand } from './band'
 import { recordCompletions } from './eta'
 import { t } from './i18n'
 import { computeRun, parseLedger, parsePlan, specTitle } from './progress'
@@ -278,6 +279,25 @@ export const register: Register = (on, options) => {
       return { text: t(o.language, arg === 'hide' ? 'hidden' : 'shown') }
     }
     return { text: 'SuperMod: no run detected' }
+  })
+
+  // The band reads state only; its buttons write from their own presses.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const state = { run: await read($, runAtom), context: await read($, contextAtom), agents: await read($, agentsAtom), ui: await read($, uiAtom) }
+    const model = bandModel(state)
+    if (model === null) return next(e)
+    return renderBand($.ui.resolve(e), planBandRow(model, e.props.bodyColumns), {
+      onDetails: async () => {
+        await $.ui.open({ id: 'supermod', title: 'SuperMod' })
+        await update($, uiAtom, u => ({ ...u, isPaneOpen: true }))
+        await observe(() => syncTimers($, o))
+      },
+      onHide: async () => {
+        await update($, uiAtom, u => ({ ...u, isHidden: true }))
+        await observe(() => syncTimers($, o))
+      },
+    })
   })
 
   on('skill.prompt', async ($, e, next) => {
