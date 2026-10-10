@@ -23,6 +23,7 @@ export type AgentRow = {
 export type ModelTotals = Record<string, Usage & { steps: number }>
 
 const FINISHED = new Set(['completed', 'failed', 'killed'])
+const isFinished = (r: AgentRow): boolean => r.endedAt !== null || FINISHED.has(r.status)
 const LARGE_WINDOW = 1_000_000
 
 export function pushReading(ring: Reading[], r: Reading, cap = 30): Reading[] {
@@ -50,7 +51,7 @@ export function upsertAgent(rows: AgentRow[], row: AgentRow, cap = 200): AgentRo
   let over = next.length - cap
   if (over <= 0) return next
   const kept = next.filter((r, i) => {
-    if (over > 0 && i < next.length - 1 && FINISHED.has(r.status)) {
+    if (over > 0 && i < next.length - 1 && isFinished(r)) {
       over--
       return false
     }

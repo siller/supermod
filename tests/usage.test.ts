@@ -68,6 +68,15 @@ test('upsertAgent drops the oldest row when none is finished', async () => {
   expect(again[0].status).toBe('idle')
 })
 
+test('upsertAgent treats a row with endedAt as finished whatever its status', async () => {
+  let rows: AgentRow[] = []
+  for (let i = 0; i < 200; i++) rows = upsertAgent(rows, agent(`r${i}`, i === 9 ? { endedAt: 5 } : {}))
+  rows = upsertAgent(rows, agent('new'))
+  expect(rows.length).toBe(200)
+  expect(rows.some(r => r.id === 'r9')).toBe(false)
+  expect(rows[0].id).toBe('r0')
+})
+
 test('agentContextPercent picks the window by model', async () => {
   const row = agent('a', { model: 'claude-sonnet-5-5', lastWindow: 100_000 })
   expect(agentContextPercent(row, 200_000, 'claude-sonnet-5-5')).toBe(50)
