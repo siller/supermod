@@ -79,3 +79,99 @@ export function parsePlan(text: string, fileName: string): Plan {
 export function specTitle(text: string, fileName: string): string {
   return firstH1(proseLines(text)) ?? slugFromFileName(fileName)
 }
+
+// ── Stations and the run model ────────────────────────────────────────────
+// Turns ledger, plan and workspace evidence (names and mtimes only) into the
+// snapshot the band and pane draw. Weights and credits are constants (spec §5.1).
+
+export type Station = 'none' | 'brief' | 'implementer' | 'review' | 'fix' | 'complete'
+export type WorkspaceFile = { name: string; mtimeMs: number }
+export type StepId = 'brainstorming' | 'spec' | 'plan' | 'tasks' | 'review' | 'finish'
+export type StepState = { id: StepId; status: 'done' | 'active' | 'pending'; done?: number; total?: number }
+export type RunEvidence = {
+  skillsSeen: Set<string>
+  specExists: boolean
+  planExists: boolean
+  ledger: Ledger | null
+  workspaceExists: boolean
+  files: WorkspaceFile[]
+  plan: Plan | null
+  finishingTurnCompleted: boolean
+  lastLedger: Ledger | null
+}
+export type RunSnapshot = {
+  title: string
+  percent: number
+  steps: StepState[]
+  currentTask: { n: number; title: string; station: Station } | null
+  completed: number
+  total: number
+}
+
+export const STEP_WEIGHTS: Record<StepId, number> = { brainstorming: 5, spec: 10, plan: 10, tasks: 60, review: 10, finish: 5 }
+export const STATION_CREDIT: Record<Station, number> = { none: 0, brief: 15, implementer: 40, review: 70, fix: 85, complete: 100 }
+
+const STEP_ORDER: StepId[] = ['brainstorming', 'spec', 'plan', 'tasks', 'review', 'finish']
+const SKILL_BRAINSTORMING = 'superpowers:brainstorming'
+const SKILL_PLANS = 'superpowers:writing-plans'
+const SKILL_FINISHING = 'superpowers:finishing-a-development-branch'
+const SKILLS_EXECUTING = ['superpowers:executing-plans', 'superpowers:subagent-driven-development']
+
+export function creditOf(station: Station): number {
+  return STATION_CREDIT[station]
+}
+
+/** The highest station task `n` has reached; ledger lines beat workspace files. */
+export function stationOf(n: number, ledger: Ledger, files: WorkspaceFile[]): Station {
+  const line = ledger.tasks.get(n)
+  if (line?.complete) return 'complete'
+  if (line && line.fixRound !== null) return 'fix'
+  if (files.some(f => f.name === `task-${n}-report.md`)) return 'review'
+  const briefs = files.filter(f => /^task-\d+-brief\.md$/.test(f.name))
+  const own = briefs.find(f => f.name === `task-${n}-brief.md`)
+  if (!own) return 'none'
+  return own.mtimeMs >= Math.max(...briefs.map(f => f.mtimeMs)) ? 'implementer' : 'brief'
+}
+
+/** Step states, percent, current task and counts for one run. */
+export function computeRun(ev: RunEvidence): RunSnapshot {
+  const ledger = ev.ledger ?? (ev.workspaceExists ? null : ev.lastLedger)
+  const seen = (s: string) => ev.skillsSeen.has(s)
+  const finishing = seen(SKILL_FINISHING)
+  const numbers = ev.plan ? [...ev.plan.taskTitles.keys()].sort((a, b) => a - b) : []
+  const open = numbers.filter(n => !ledger?.tasks.get(n)?.complete)
+  const allComplete = numbers.length > 0 && open.length === 0
+  const tasksActive = ledger !== null && !allComplete
+
+  const raw: Record<StepId, 'done' | 'active' | 'pending'> = {
+    brainstorming: ev.specExists ? 'done' : seen(SKILL_BRAINSTORMING) ? 'active' : 'pending',
+    spec: ev.specExists ? 'done' : 'pending',
+    plan: ev.planExists && (ledger !== null || SKILLS_EXECUTING.some(seen)) ? 'done' : seen(SKILL_PLANS) && ledger === null ? 'active' : 'pending',
+    tasks: allComplete ? 'done' : tasksActive ? 'active' : 'pending',
+    review: (!ev.workspaceExists && allComplete) || finishing ? 'done' : allComplete ? 'active' : 'pending',
+    finish: finishing && ev.finishingTurnCompleted ? 'done' : finishing ? 'active' : 'pending',
+  }
+  // A step that is done or active makes every earlier step done.
+  let later = false
+  for (const id of [...STEP_ORDER].reverse()) {
+    if (later && raw[id] !== 'done') raw[id] = 'done'
+    if (raw[id] !== 'pending') later = true
+  }
+
+  const completed = numbers.length - open.length
+  const total = numbers.length
+  const stationNow = (n: number): Station => (ledger ? stationOf(n, ledger, ev.files) : 'none')
+  const currentN = raw.tasks === 'active' && open.length > 0 ? open[0] : null
+  const credit = currentN === null ? 0 : creditOf(stationNow(currentN))
+
+  let percent = 0
+  for (const id of STEP_ORDER) {
+    const w = STEP_WEIGHTS[id]
+    if (raw[id] === 'done') percent += w
+    else if (raw[id] === 'active') percent += id === 'tasks' ? (total === 0 ? 0 : (w * (completed + credit / 100)) / total) : w / 2
+  }
+
+  const steps: StepState[] = STEP_ORDER.map(id => (id === 'tasks' ? { id, status: raw[id], done: completed, total } : { id, status: raw[id] }))
+  const currentTask = currentN === null ? null : { n: currentN, title: ev.plan?.taskTitles.get(currentN) ?? '', station: stationNow(currentN) }
+  return { title: ev.plan?.title ?? '', percent: Math.round(percent), steps, currentTask, completed, total }
+}
